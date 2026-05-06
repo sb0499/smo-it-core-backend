@@ -40,3 +40,5 @@ class TareaInterna(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     proyecto: Mapped["Proyecto"] = relationship("Proyecto", back_populates="tareas")
+
+    responsable: Mapped["Usuario"] = relationship("Usuario", back_populates="tareas_asignadas")

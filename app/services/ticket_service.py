@@ -4,7 +4,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from fastapi import BackgroundTasks
 from app.models.ticket import Ticket, TicketStatus
-from app.models.usuario import Usuario, UserRole
+from app.models.usuario import Usuario
+from app.models.rol import Rol # <--- IMPORTAMOS LA NUEVA TABLA ROL
 from app.models.guardia import GuardiaFeriado
 from app.models.empresa import Empresa
 from app.schemas.ticket_schema import TicketCreate, TicketUpdate
@@ -22,10 +23,11 @@ class TicketService:
         hoy = datetime.now()
         dia_semana = hoy.weekday() 
 
-        if current_user.rol == UserRole.TECNICO:
+        # --- REGLA 1: LEEMOS EL ROL DESDE LA BASE DE DATOS ---
+        if current_user.rol.nombre == "TECNICO":
             tecnico_asignado = current_user.id
             
-        elif current_user.rol == UserRole.ADMIN and ticket_in.tecnico_id:
+        elif current_user.rol.nombre == "ADMIN" and ticket_in.tecnico_id:
             tecnico_asignado = ticket_in.tecnico_id
             
         else:
@@ -49,12 +51,15 @@ class TicketService:
                         tecnico_asignado = tecnico_fijo.id
                 
                 if not tecnico_asignado:
+                    # --- CORRECCIÓN EN EL BALANCEO DE CARGA ---
                     tecnico_menos_ocupado = db.query(
                         Usuario.id, func.count(Ticket.id).label('total_tickets')
                     ).outerjoin(
                         Ticket, (Usuario.id == Ticket.tecnico_id) & (Ticket.estado.in_([TicketStatus.NUEVO, TicketStatus.PENDIENTE]))
+                    ).join(
+                        Rol, Usuario.rol_id == Rol.id # <-- Unimos la tabla Rol
                     ).filter(
-                        Usuario.rol == UserRole.TECNICO,
+                        Rol.nombre == "TECNICO",      # <-- Filtramos por el nombre del Rol
                         Usuario.is_active == True
                     ).group_by(Usuario.id).order_by('total_tickets').first()
 
@@ -69,7 +74,7 @@ class TicketService:
             titulo=ticket_in.titulo,
             descripcion=ticket_in.descripcion,
             categoria=ticket_in.categoria,
-            empresa_id=ticket_in.empresa_id, # Guardamos la llave foránea
+            empresa_id=ticket_in.empresa_id, 
             area_solicitante=ticket_in.area_solicitante,
             persona_solicitante=ticket_in.persona_solicitante,
             medio_solicitud=ticket_in.medio_solicitud,
@@ -105,6 +110,26 @@ class TicketService:
         update_data = ticket_in.model_dump(exclude_unset=True)
         for field, value in update_data.items():
             setattr(db_ticket, field, value)
+        
+        db.commit()
+        db.refresh(db_ticket)
+        return db_ticket
+
+    @staticmethod
+    def agregar_bitacora(db: Session, ticket_id: int, current_user: Usuario, accion: str) -> Ticket | None:
+        db_ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+        if not db_ticket:
+            return None
+        
+        nueva_entrada = {
+            "accion": accion,
+            "fecha": str(datetime.now()),
+            "usuario": current_user.nombre_completo
+        }
+        
+        bitacora_actual = list(db_ticket.bitacora_dinamica) if db_ticket.bitacora_dinamica else []
+        bitacora_actual.append(nueva_entrada)
+        db_ticket.bitacora_dinamica = bitacora_actual
         
         db.commit()
         db.refresh(db_ticket)

@@ -25,7 +25,13 @@ def create_ticket(
     current_user: Usuario = Depends(deps.get_current_user),
     background_tasks: BackgroundTasks
 ) -> Any:
-    return ticket_service.create_ticket(db, ticket_in, creador_id=current_user.id, background_tasks=background_tasks)
+    # LA CORRECCIÓN ESTÁ AQUÍ: Pasamos el current_user completo al servicio
+    return ticket_service.create_ticket(
+        db=db, 
+        ticket_in=ticket_in, 
+        current_user=current_user, 
+        background_tasks=background_tasks
+    )
 
 @router.put("/{ticket_id}", response_model=Ticket)
 def update_ticket(

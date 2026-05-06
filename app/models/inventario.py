@@ -29,4 +29,4 @@ class Activo(Base):
     fecha_compra: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
-    usuario_asignado: Mapped["Usuario | None"] = relationship("Usuario", back_populates="activos_asignados")
+    responsable: Mapped["Usuario | None"] = relationship("Usuario", back_populates="activos_asignados")

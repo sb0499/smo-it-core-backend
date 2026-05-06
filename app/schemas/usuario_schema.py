@@ -1,28 +1,36 @@
 from datetime import datetime
-from pydantic import BaseModel, EmailStr, ConfigDict
-from app.models.usuario import UserRole
+from pydantic import BaseModel, ConfigDict
+
+class RolBase(BaseModel):
+    id: int
+    nombre: str
+
+class EmpresaBase(BaseModel):
+    id: int
+    nombre: str
 
 class UsuarioBase(BaseModel):
-    email: EmailStr
+    email: str
     nombre_completo: str
-    rol: UserRole = UserRole.USUARIO
-    is_active: bool | None = True
+    is_active: bool = True
+    rol_id: int
 
 class UsuarioCreate(UsuarioBase):
     password: str
+    empresa_ids: list[int] = []
 
 class UsuarioUpdate(BaseModel):
-    email: EmailStr | None = None
+    email: str | None = None
     nombre_completo: str | None = None
-    rol: UserRole | None = None
-    password: str | None = None
     is_active: bool | None = None
+    rol_id: int | None = None
+    password: str | None = None
+    empresa_ids: list[int] | None = None
 
-class UsuarioInDBBase(UsuarioBase):
+class UsuarioResponse(UsuarioBase):
     id: int
     created_at: datetime
-    
-    model_config = ConfigDict(from_attributes=True)
+    rol: RolBase
+    empresas: list[EmpresaBase] = []
 
-class Usuario(UsuarioInDBBase):
-    pass
+    model_config = ConfigDict(from_attributes=True)    
