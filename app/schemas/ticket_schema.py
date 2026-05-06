@@ -4,11 +4,10 @@ from pydantic import BaseModel, ConfigDict
 from app.models.ticket import TicketStatus, TicketPriority, MedioSolicitud
 
 class TicketBase(BaseModel):
-    
     titulo: str
     descripcion: str
     categoria: str
-    empresa: str | None = None
+    empresa_id: int | None = None # Cambiado a ID
     area_solicitante: str | None = None
     persona_solicitante: str | None = None
     medio_solicitud: MedioSolicitud = MedioSolicitud.PLATAFORMA
@@ -20,13 +19,13 @@ class TicketBase(BaseModel):
     bitacora_dinamica: list[Any] | None = []
 
 class TicketCreate(TicketBase):
-    pass
+    tecnico_id: int | None = None
 
 class TicketUpdate(BaseModel):
     titulo: str | None = None
     descripcion: str | None = None
     categoria: str | None = None
-    empresa: str | None = None
+    empresa_id: int | None = None # Cambiado a ID
     area_solicitante: str | None = None
     persona_solicitante: str | None = None
     medio_solicitud: MedioSolicitud | None = None

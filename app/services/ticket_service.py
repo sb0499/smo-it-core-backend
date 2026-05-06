@@ -1,9 +1,12 @@
 from typing import Any
 from datetime import datetime
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from fastapi import BackgroundTasks
-from app.models.ticket import Ticket
-from app.models.guardia import GuardiaFeriado # Listo para la lógica de turnos
+from app.models.ticket import Ticket, TicketStatus
+from app.models.usuario import Usuario, UserRole
+from app.models.guardia import GuardiaFeriado
+from app.models.empresa import Empresa
 from app.schemas.ticket_schema import TicketCreate, TicketUpdate
 from app.services.notificacion_service import notificacion_service
 
@@ -13,13 +16,60 @@ class TicketService:
         return db.query(Ticket).offset(skip).limit(limit).all()
 
     @staticmethod
-    def create_ticket(db: Session, ticket_in: TicketCreate, creador_id: int, background_tasks: BackgroundTasks) -> Ticket:
-        # Extraemos los datos del esquema
+    def create_ticket(db: Session, ticket_in: TicketCreate, current_user: Usuario, background_tasks: BackgroundTasks) -> Ticket:
+        
+        tecnico_asignado = None
+        hoy = datetime.now()
+        dia_semana = hoy.weekday() 
+
+        if current_user.rol == UserRole.TECNICO:
+            tecnico_asignado = current_user.id
+            
+        elif current_user.rol == UserRole.ADMIN and ticket_in.tecnico_id:
+            tecnico_asignado = ticket_in.tecnico_id
+            
+        else:
+            if dia_semana < 5: 
+                nombre_empresa = ""
+                if ticket_in.empresa_id:
+                    emp_db = db.query(Empresa).filter(Empresa.id == ticket_in.empresa_id).first()
+                    if emp_db:
+                        nombre_empresa = emp_db.nombre.upper()
+                
+                TECNICOS_SEDE = {
+                    "CCI": "cci@smo.com",
+                    "SCALA": "scala@smo.com",
+                    "CONDADO": "condado@smo.com"
+                }
+                
+                if nombre_empresa in TECNICOS_SEDE:
+                    email_fijo = TECNICOS_SEDE[nombre_empresa]
+                    tecnico_fijo = db.query(Usuario).filter(Usuario.email == email_fijo).first()
+                    if tecnico_fijo:
+                        tecnico_asignado = tecnico_fijo.id
+                
+                if not tecnico_asignado:
+                    tecnico_menos_ocupado = db.query(
+                        Usuario.id, func.count(Ticket.id).label('total_tickets')
+                    ).outerjoin(
+                        Ticket, (Usuario.id == Ticket.tecnico_id) & (Ticket.estado.in_([TicketStatus.NUEVO, TicketStatus.PENDIENTE]))
+                    ).filter(
+                        Usuario.rol == UserRole.TECNICO,
+                        Usuario.is_active == True
+                    ).group_by(Usuario.id).order_by('total_tickets').first()
+
+                    if tecnico_menos_ocupado:
+                        tecnico_asignado = tecnico_menos_ocupado.id
+            else:
+                guardia = db.query(GuardiaFeriado).filter(GuardiaFeriado.fecha == hoy.date()).first()
+                if guardia:
+                    tecnico_asignado = guardia.tecnico_id
+
         db_ticket = Ticket(
             titulo=ticket_in.titulo,
             descripcion=ticket_in.descripcion,
             categoria=ticket_in.categoria,
-            empresa=ticket_in.empresa,
+            empresa_id=ticket_in.empresa_id, # Guardamos la llave foránea
             area_solicitante=ticket_in.area_solicitante,
             persona_solicitante=ticket_in.persona_solicitante,
             medio_solicitud=ticket_in.medio_solicitud,
@@ -28,20 +78,20 @@ class TicketService:
             observaciones=ticket_in.observaciones,
             prioridad=ticket_in.prioridad,
             estado=ticket_in.estado,
-            bitacora_dinamica=[{"accion": "Ticket Creado", "fecha": str(datetime.now())}],
-            creador_id=creador_id
+            bitacora_dinamica=[{"accion": f"Ticket Creado por {current_user.nombre_completo}", "fecha": str(hoy)}],
+            creador_id=current_user.id,
+            tecnico_id=tecnico_asignado
         )
         
         db.add(db_ticket)
         db.commit()
         db.refresh(db_ticket)
         
-        # Enviamos la notificación en segundo plano
         background_tasks.add_task(
             notificacion_service.enviar_correo,
             "soporte@smo.com",
             f"Nuevo Ticket: {db_ticket.titulo}",
-            f"Se ha creado un nuevo ticket con ID {db_ticket.id} para la empresa {db_ticket.empresa or 'N/A'}."
+            f"Se ha creado un nuevo ticket. Asignado al técnico ID: {tecnico_asignado or 'Sin asignar'}."
         )
         
         return db_ticket
