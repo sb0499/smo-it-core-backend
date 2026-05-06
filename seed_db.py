@@ -1,15 +1,26 @@
 from sqlalchemy.orm import Session
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, engine # Añadimos engine aquí
 
-# Importamos Base y TODOS los modelos para que SQLAlchemy los conozca
+# Importamos Base y TODOS los modelos para que SQLAlchemy los conozca y los cree
 from app.db.base import Base
 from app.models.usuario import Usuario, UserRole
-from app.models.ticket import Ticket, TicketPriority, TicketStatus
+from app.models.ticket import Ticket, TicketPriority, TicketStatus, MedioSolicitud # Añadido MedioSolicitud
 from app.models.inventario import Activo
 from app.models.proyecto import Proyecto, TareaInterna
+from app.models.guardia import GuardiaFeriado # Nuevo modelo
+from app.models.plantilla import PlantillaRecurrente # Nuevo modelo
 
 from app.core.security import get_password_hash, verify_password
+
 def force_seed():
+    # MAGIA: Esto crea todas las tablas nuevas en MySQL si no existen
+
+    print("Destruyendo tablas viejas...")
+    Base.metadata.drop_all(bind=engine)
+    
+    print("Creando/Actualizando tablas en la Base de Datos...")
+    Base.metadata.create_all(bind=engine)
+    
     db: Session = SessionLocal()
     try:
         admin_email = "admin@smo.com"
