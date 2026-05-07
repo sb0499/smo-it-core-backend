@@ -33,7 +33,7 @@ def login_access_token(
 
     custom_claims = {
         "email": user.email,
-        "rol": user.rol.value,
+        "rol": user.rol.nombre,
         "nombre_completo": user.nombre_completo
     }
 
@@ -46,4 +46,7 @@ def login_access_token(
     return {
         "access_token": access_token,
         "token_type": "bearer",
+        "user_id": user.id,
+        "rol": user.rol.nombre, 
+        "nombre": user.nombre_completo
     }

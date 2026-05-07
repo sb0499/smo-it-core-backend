@@ -26,15 +26,15 @@ def create_activo(
 ) -> Any:
     return inventario_service.create_activo(db, activo_in)
 
-@router.post("/{activo_id}/asignar/{usuario_id}", response_model=Activo)
+@router.post("/{activo_id}/asignar/{persona_id}", response_model=Activo)
 def asignar_activo(
     *,
     db: Session = Depends(deps.get_db),
     activo_id: int,
-    usuario_id: int,
+    persona_id: int, # <--- CAMBIO AQUÍ
     current_user: Usuario = Depends(deps.get_current_active_admin)
 ) -> Any:
-    activo = inventario_service.asignar_activo(db, activo_id, usuario_id)
+    activo = inventario_service.asignar_activo(db, activo_id, persona_id)
     if not activo:
         raise HTTPException(status_code=404, detail="Activo no encontrado")
     return activo

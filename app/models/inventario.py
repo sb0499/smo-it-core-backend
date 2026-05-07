@@ -1,12 +1,12 @@
 import enum
 from datetime import datetime
 from typing import TYPE_CHECKING
-from sqlalchemy import String, Enum, DateTime, ForeignKey, func
+from sqlalchemy import String, Enum, DateTime, ForeignKey, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
-    from .usuario import Usuario
+    from .persona import Persona
 
 class ActivoStatus(str, enum.Enum):
     STOCK = "Stock"
@@ -22,11 +22,12 @@ class Activo(Base):
     serial: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     marca: Mapped[str] = mapped_column(String(100), nullable=False)
     modelo: Mapped[str] = mapped_column(String(100), nullable=False)
+    especificaciones: Mapped[str | None] = mapped_column(Text, nullable=True)
     estado: Mapped[ActivoStatus] = mapped_column(Enum(ActivoStatus), default=ActivoStatus.STOCK)
     
-    usuario_id: Mapped[int | None] = mapped_column(ForeignKey("usuario.id"), nullable=True)
+    persona_id: Mapped[int | None] = mapped_column(ForeignKey("persona.id"), nullable=True)
     
     fecha_compra: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
-    responsable: Mapped["Usuario | None"] = relationship("Usuario", back_populates="activos_asignados")
+    persona: Mapped["Persona | None"] = relationship("Persona", back_populates="activos")

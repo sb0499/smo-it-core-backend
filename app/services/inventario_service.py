@@ -9,19 +9,24 @@ class InventarioService:
 
     @staticmethod
     def create_activo(db: Session, activo_in: ActivoCreate) -> Activo:
-        db_activo = Activo(**activo_in.model_dump())
+        datos = activo_in.model_dump()
+        db_activo = Activo(**datos)
+        if db_activo.persona_id:
+            db_activo.estado = ActivoStatus.ASIGNADO
+        else:
+            db_activo.estado = ActivoStatus.STOCK
         db.add(db_activo)
         db.commit()
         db.refresh(db_activo)
         return db_activo
 
     @staticmethod
-    def asignar_activo(db: Session, activo_id: int, usuario_id: int) -> Activo | None:
+    def asignar_activo(db: Session, activo_id: int, persona_id: int) -> Activo | None:
         db_activo = db.query(Activo).filter(Activo.id == activo_id).first()
         if not db_activo:
             return None
         
-        db_activo.usuario_id = usuario_id
+        db_activo.persona_id = persona_id
         db_activo.estado = ActivoStatus.ASIGNADO
         db.commit()
         db.refresh(db_activo)

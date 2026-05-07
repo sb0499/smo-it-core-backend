@@ -14,8 +14,6 @@ class GuardiaFeriado(Base):
     fecha: Mapped[date] = mapped_column(Date, unique=True, index=True, nullable=False)
     tecnico_id: Mapped[int] = mapped_column(ForeignKey("usuario.id"), nullable=False)
     
-    # --- LA COLUMNA FALTANTE ---
     observaciones: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # El puente para que Swagger te devuelva los datos del técnico
     tecnico: Mapped["Usuario"] = relationship("Usuario")

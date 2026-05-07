@@ -11,6 +11,8 @@ class ActivoBase(BaseModel):
 
 class ActivoCreate(ActivoBase):
     fecha_compra: datetime | None = None
+    persona_id: int | None = None
+    especificaciones: str | None = None
 
 class ActivoUpdate(BaseModel):
     codigo: str | None = None
@@ -22,8 +24,9 @@ class ActivoUpdate(BaseModel):
 
 class ActivoInDBBase(ActivoBase):
     id: int
-    usuario_id: int | None = None
+    persona_id: int | None = None
     fecha_compra: datetime | None = None
+    especificaciones: str | None = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

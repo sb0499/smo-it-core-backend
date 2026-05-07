@@ -10,10 +10,8 @@ class GuardiaService:
 
     @staticmethod
     def create_guardia(db: Session, guardia_in: GuardiaCreate) -> GuardiaFeriado:
-        # Evitar duplicados para la misma fecha
         existente = db.query(GuardiaFeriado).filter(GuardiaFeriado.fecha == guardia_in.fecha).first()
         if existente:
-            # Si ya existe, actualizamos el técnico
             existente.tecnico_id = guardia_in.tecnico_id
             existente.observaciones = guardia_in.observaciones
             db.commit()
