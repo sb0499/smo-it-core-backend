@@ -1,4 +1,3 @@
--- Creación de la base de datos
 CREATE DATABASE IF NOT EXISTS smo_it_core CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE smo_it_core;
 
@@ -12,7 +11,5 @@ CREATE TABLE IF NOT EXISTS usuario (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Insertar usuario Admin inicial (password: admin123)
--- Hash generado con bcrypt para 'admin123'
 INSERT INTO usuario (email, hashed_password, nombre_completo, rol) 
 VALUES ('admin@smo.com', '$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6L6s57OTWzKuYzL2', 'Administrador Sistema', 'ADMIN');
