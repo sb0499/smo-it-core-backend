@@ -18,7 +18,8 @@ export const createActivo = async (req: AuthRequest, res: Response): Promise<voi
 export const asignarActivo = async (req: AuthRequest, res: Response): Promise<void> => {
   const activoId = parseInt(req.params.activo_id);
   const personaId = parseInt(req.params.persona_id);
-  const activo = await inventarioService.asignarActivo(activoId, personaId, req.currentUser.id);
+  const { observaciones } = req.body;
+  const activo = await inventarioService.asignarActivo(activoId, personaId, req.currentUser.id, observaciones);
   if (!activo) {
     res.status(404).json({ detail: 'Activo no encontrado' });
     return;

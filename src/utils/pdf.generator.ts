@@ -49,7 +49,11 @@ export const generarActaMovimiento = (movimiento: any): Promise<Buffer> => {
     doc.text('_________________________', 80, firmaY);
     doc.text('_________________________', 350, firmaY);
     doc.text('Firma de quien entrega', 80, firmaY + 15);
+    doc.text(`${movimiento.persona_entrega_nombre}`, 80, firmaY + 30);
+    doc.text(`${movimiento.persona_entrega_cedula}`, 80, firmaY + 45);
     doc.text('Firma de quien recibe', 350, firmaY + 15);
+    doc.text(`${movimiento.persona_recibe_nombre}`, 350, firmaY + 30);
+    doc.text(`${movimiento.persona_recibe_cedula}`, 350, firmaY + 45);
 
     doc.end();
   });

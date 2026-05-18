@@ -99,3 +99,55 @@ ticketsRouter.post('/', requireAuth, ctrl.createTicket);
  *         description: Ticket no encontrado
  */
 ticketsRouter.put('/:ticket_id', requireAuth, ctrl.updateTicket);
+
+/**
+ * @openapi
+ * /api/v1/tickets/crear-desde-plantilla/{plantilla_id}:
+ *   post:
+ *     tags: [Tickets]
+ *     summary: Crear un ticket a partir de una plantilla recurrente (con asignación automática)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: plantilla_id
+ *         required: true
+ *         schema: { type: integer }
+ *     responses:
+ *       201:
+ *         description: Ticket creado con éxito a partir de la plantilla
+ *       404:
+ *         description: Plantilla no encontrada
+ */
+ticketsRouter.post('/crear-desde-plantilla/:plantilla_id', requireAuth, ctrl.crearDesdePlantilla);
+
+/**
+ * @openapi
+ * /api/v1/tickets/reporte/semanal:
+ *   get:
+ *     tags: [Tickets]
+ *     summary: Descargar reporte semanal de bitácoras de soportes en Excel
+ *     description: Retorna un archivo Excel estilizado premium. Si es ADMIN ve todo; si es TECNICO ve solo lo suyo.
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: Archivo Excel con las bitácoras (.xlsx)
+ *         content:
+ *           application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+ *             schema:
+ *               type: string
+ *               format: binary
+ */
+ticketsRouter.get('/reporte/semanal', requireAuth, ctrl.descargarReporteSemanal);
+
+/**
+ * @openapi
+ * /api/v1/tickets/alertas/cierre-diario:
+ *   post:
+ *     tags: [Tickets]
+ *     summary: Enviar recordatorios por correo a técnicos con tickets pendientes (Cierre Diario)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: Recordatorios enviados exitosamente
+ */
+ticketsRouter.post('/alertas/cierre-diario', requireAuth, ctrl.ejecutarRecordatorioCierre);

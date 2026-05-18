@@ -13,15 +13,14 @@ import { guardiasRouter } from './routes/guardias.routes';
 import { personasRouter } from './routes/personas.routes';
 import { consumiblesRouter } from './routes/consumibles.routes';
 import { plantillasRouter } from './routes/plantillas.routes';
+import { proveedoresRouter } from './routes/proveedores.routes';
 
 const app = express();
 
-// Middlewares
 app.use(cors({ origin: '*', credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Swagger config
 const swaggerOptions: swaggerJsdoc.Options = {
   definition: {
     openapi: '3.0.0',
@@ -62,6 +61,7 @@ app.use(`${API}/guardias`, guardiasRouter);
 app.use(`${API}/personas`, personasRouter);
 app.use(`${API}/consumibles`, consumiblesRouter);
 app.use(`${API}/plantillas`, plantillasRouter);
+app.use(`${API}/proveedores`, proveedoresRouter);
 
 // Root health check
 app.get('/', (_req, res) => {

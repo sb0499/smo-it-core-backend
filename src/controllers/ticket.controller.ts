@@ -23,3 +23,29 @@ export const updateTicket = async (req: AuthRequest, res: Response): Promise<voi
   }
   res.json(ticket);
 };
+
+export const crearDesdePlantilla = async (req: AuthRequest, res: Response): Promise<void> => {
+  const plantillaId = parseInt(req.params.plantilla_id);
+  const ticket = await ticketService.crearDesdePlantilla(plantillaId, req.currentUser);
+  if (!ticket) {
+    res.status(404).json({ detail: 'Plantilla recurrente no encontrada' });
+    return;
+  }
+  res.status(201).json(ticket);
+};
+
+export const descargarReporteSemanal = async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!req.user) {
+    res.status(401).json({ detail: 'No autorizado' });
+    return;
+  }
+  const buffer = await ticketService.generarReporteSemanalExcel(req.user.rol, req.user.id);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="Reporte_Soportes_IT.xlsx"');
+  res.send(buffer);
+};
+
+export const ejecutarRecordatorioCierre = async (_req: AuthRequest, res: Response): Promise<void> => {
+  const summary = await ticketService.enviarRecordatoriosCierreDiario();
+  res.json({ message: 'Recordatorios diarios enviados con éxito', ...summary });
+};

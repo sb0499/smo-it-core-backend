@@ -23,7 +23,7 @@ async function forceSeed() {
   const tables = [
     'tarea_interna', 'proyecto', 'movimiento_inventario', 'activo', 'consumible',
     'guardia_feriado', 'ticket', 'usuario_empresa', 'usuario', 'persona', 'empresa', 'rol',
-    'plantilla_recurrente'
+    'plantilla_recurrente', 'proveedor'
   ];
   for (const t of tables) {
     await conn.query(`DROP TABLE IF EXISTS \`${t}\``);
@@ -63,6 +63,14 @@ async function forceSeed() {
       FOREIGN KEY (empresa_id) REFERENCES empresa(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE proveedor (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      nombre VARCHAR(150) NOT NULL UNIQUE,
+      contacto VARCHAR(150),
+      telefono VARCHAR(50),
+      email VARCHAR(150)
+    );
+
     CREATE TABLE persona (
       id INT AUTO_INCREMENT PRIMARY KEY,
       cedula VARCHAR(20) NOT NULL UNIQUE,
@@ -83,9 +91,11 @@ async function forceSeed() {
       especificaciones TEXT,
       estado ENUM('Stock','Asignado','Mantenimiento','Baja') DEFAULT 'Stock',
       persona_id INT,
+      proveedor_id INT,
       fecha_compra DATETIME,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (persona_id) REFERENCES persona(id)
+      FOREIGN KEY (persona_id) REFERENCES persona(id),
+      FOREIGN KEY (proveedor_id) REFERENCES proveedor(id)
     );
 
     CREATE TABLE movimiento_inventario (
@@ -189,6 +199,19 @@ async function forceSeed() {
     await conn.query(`INSERT INTO empresa (nombre) VALUES (?)`, [e]);
   }
 
+  console.log('🔌 Insertando proveedores...');
+  const proveedores = [
+    { nombre: 'TecnoGlobal S.A.', contacto: 'Juan Pérez', telefono: '0999999999', email: 'ventas@tecnoglobal.com' },
+    { nombre: 'CompuWorld Ecuador', contacto: 'María Gómez', telefono: '0988888888', email: 'contacto@compuworld.com' },
+    { nombre: 'HP Ecuador', contacto: 'Carlos Ruiz', telefono: '0977777777', email: 'soporte@hp.com.ec' }
+  ];
+  for (const p of proveedores) {
+    await conn.query(
+      `INSERT INTO proveedor (nombre, contacto, telefono, email) VALUES (?, ?, ?, ?)`,
+      [p.nombre, p.contacto, p.telefono, p.email]
+    );
+  }
+
   console.log('👤 Creando usuario ADMIN...');
   const [rolRows]: any = await conn.query(`SELECT id FROM rol WHERE nombre = 'ADMIN'`);
   const rolId = rolRows[0].id;
@@ -204,8 +227,60 @@ async function forceSeed() {
     await conn.query(`INSERT INTO usuario_empresa (usuario_id, empresa_id) VALUES (?, ?)`, [adminId, e.id]);
   }
 
+  console.log('👤 Creando usuarios Técnicos y de Sede...');
+  const [techRolRows]: any = await conn.query(`SELECT id FROM rol WHERE nombre = 'TECNICO'`);
+  const techRolId = techRolRows[0].id;
+  const [userRolRows]: any = await conn.query(`SELECT id FROM rol WHERE nombre = 'USUARIO'`);
+  const userRolId = userRolRows[0].id;
+
+  const techHash = await bcrypt.hash('tech123', 12);
+  const userHash = await bcrypt.hash('user123', 12);
+
+  // 1. Santi Condado (CONDADO)
+  const [santiResult]: any = await conn.query(
+    `INSERT INTO usuario (email, hashed_password, nombre_completo, is_active, rol_id) VALUES (?, ?, ?, ?, ?)`,
+    ['santi@smo.com', techHash, 'Santi Condado', true, techRolId]
+  );
+  const [condadoRows]: any = await conn.query(`SELECT id FROM empresa WHERE nombre = 'CONDADO'`);
+  if (condadoRows.length > 0) {
+    await conn.query(`INSERT INTO usuario_empresa (usuario_id, empresa_id) VALUES (?, ?)`, [santiResult.insertId, condadoRows[0].id]);
+  }
+
+  // 2. Fide Scala (SCALA)
+  const [fideResult]: any = await conn.query(
+    `INSERT INTO usuario (email, hashed_password, nombre_completo, is_active, rol_id) VALUES (?, ?, ?, ?, ?)`,
+    ['fide@smo.com', techHash, 'Fide Scala', true, techRolId]
+  );
+  const [scalaRows]: any = await conn.query(`SELECT id FROM empresa WHERE nombre = 'SCALA'`);
+  if (scalaRows.length > 0) {
+    await conn.query(`INSERT INTO usuario_empresa (usuario_id, empresa_id) VALUES (?, ?)`, [fideResult.insertId, scalaRows[0].id]);
+  }
+
+  // 3. Gabo CCI (CCI)
+  const [gaboResult]: any = await conn.query(
+    `INSERT INTO usuario (email, hashed_password, nombre_completo, is_active, rol_id) VALUES (?, ?, ?, ?, ?)`,
+    ['gabo@smo.com', techHash, 'Gabo CCI', true, techRolId]
+  );
+  const [cciRows]: any = await conn.query(`SELECT id FROM empresa WHERE nombre = 'CCI'`);
+  if (cciRows.length > 0) {
+    await conn.query(`INSERT INTO usuario_empresa (usuario_id, empresa_id) VALUES (?, ?)`, [gaboResult.insertId, cciRows[0].id]);
+  }
+
+  // 4. Cliente Condado (USUARIO)
+  const [userResult]: any = await conn.query(
+    `INSERT INTO usuario (email, hashed_password, nombre_completo, is_active, rol_id) VALUES (?, ?, ?, ?, ?)`,
+    ['user@smo.com', userHash, 'Cliente Condado', true, userRolId]
+  );
+  if (condadoRows.length > 0) {
+    await conn.query(`INSERT INTO usuario_empresa (usuario_id, empresa_id) VALUES (?, ?)`, [userResult.insertId, condadoRows[0].id]);
+  }
+
   console.log('\n✅ Base de datos reiniciada exitosamente.');
-  console.log('   📧 admin@smo.com | 🔑 admin123\n');
+  console.log('   📧 admin@smo.com   | 🔑 admin123 (ADMIN)');
+  console.log('   📧 santi@smo.com   | 🔑 tech123  (TECNICO - CONDADO)');
+  console.log('   📧 fide@smo.com    | 🔑 tech123  (TECNICO - SCALA)');
+  console.log('   📧 gabo@smo.com    | 🔑 tech123  (TECNICO - CCI)');
+  console.log('   📧 user@smo.com    | 🔑 user123  (USUARIO - CONDADO)\n');
 
   await conn.end();
 }

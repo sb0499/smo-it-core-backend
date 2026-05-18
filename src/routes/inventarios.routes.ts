@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requireAuth, requireAdmin } from '../middlewares/auth.middleware';
+import { requireAuth, requireAdmin, requireAdminOrTecnico } from '../middlewares/auth.middleware';
 import * as ctrl from '../controllers/inventario.controller';
 
 export const inventariosRouter = Router();
@@ -45,12 +45,13 @@ inventariosRouter.get('/', requireAuth, ctrl.getActivos);
  *               modelo: { type: string }
  *               especificaciones: { type: string }
  *               persona_id: { type: integer, nullable: true }
+ *               proveedor_id: { type: integer, nullable: true }
  *               fecha_compra: { type: string, format: date }
  *     responses:
  *       201:
  *         description: Activo creado
  */
-inventariosRouter.post('/', requireAuth, requireAdmin, ctrl.createActivo);
+inventariosRouter.post('/', requireAuth, requireAdminOrTecnico, ctrl.createActivo);
 
 /**
  * @openapi
@@ -68,13 +69,20 @@ inventariosRouter.post('/', requireAuth, requireAdmin, ctrl.createActivo);
  *         name: persona_id
  *         required: true
  *         schema: { type: integer }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               observaciones: { type: string, example: "Equipo se entrega con cargador genérico y rasguño leve en tapa posterior" }
  *     responses:
  *       200:
  *         description: Activo asignado
  *       404:
  *         description: Activo no encontrado
  */
-inventariosRouter.post('/:activo_id/asignar/:persona_id', requireAuth, requireAdmin, ctrl.asignarActivo);
+inventariosRouter.post('/:activo_id/asignar/:persona_id', requireAuth, requireAdminOrTecnico, ctrl.asignarActivo);
 
 /**
  * @openapi
@@ -92,7 +100,7 @@ inventariosRouter.post('/:activo_id/asignar/:persona_id', requireAuth, requireAd
  *       200:
  *         description: Historial de movimientos
  */
-inventariosRouter.get('/:activo_id/historial', requireAuth, requireAdmin, ctrl.getHistorial);
+inventariosRouter.get('/:activo_id/historial', requireAuth, requireAdminOrTecnico, ctrl.getHistorial);
 
 /**
  * @openapi
@@ -117,7 +125,7 @@ inventariosRouter.get('/:activo_id/historial', requireAuth, requireAdmin, ctrl.g
  *       404:
  *         description: Movimiento no encontrado
  */
-inventariosRouter.get('/movimientos/:movimiento_id/acta', requireAuth, requireAdmin, ctrl.descargarActa);
+inventariosRouter.get('/movimientos/:movimiento_id/acta', requireAuth, requireAdminOrTecnico, ctrl.descargarActa);
 
 /**
  * @openapi
@@ -140,7 +148,7 @@ inventariosRouter.get('/movimientos/:movimiento_id/acta', requireAuth, requireAd
  *       400:
  *         description: Activo no encontrado o ya en bodega
  */
-inventariosRouter.post('/:activo_id/devolver', requireAuth, requireAdmin, ctrl.devolverActivo);
+inventariosRouter.post('/:activo_id/devolver', requireAuth, requireAdminOrTecnico, ctrl.devolverActivo);
 
 /**
  * @openapi
@@ -171,4 +179,4 @@ inventariosRouter.post('/:activo_id/devolver', requireAuth, requireAdmin, ctrl.d
  *       404:
  *         description: Activo no encontrado
  */
-inventariosRouter.patch('/:activo_id/estado', requireAuth, requireAdmin, ctrl.cambiarEstado);
+inventariosRouter.patch('/:activo_id/estado', requireAuth, requireAdminOrTecnico, ctrl.cambiarEstado);
