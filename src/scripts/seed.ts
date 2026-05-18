@@ -21,7 +21,9 @@ async function forceSeed() {
   console.log('🗑️  Eliminando tablas (con FOREIGN_KEY_CHECKS desactivado)...');
   await conn.query(`SET FOREIGN_KEY_CHECKS = 0`);
   const tables = [
-    'tarea_interna', 'proyecto', 'movimiento_inventario', 'activo', 'consumible',
+    'chat_mensaje', 'chat_canal_miembro', 'chat_canal', 'proyecto_historial',
+    'proyecto_archivo', 'proyecto_comentario', 'subtarea_proyecto', 'tarea_proyecto',
+    'proyecto', 'movimiento_inventario', 'activo', 'consumible',
     'guardia_feriado', 'ticket', 'usuario_empresa', 'usuario', 'persona', 'empresa', 'rol',
     'plantilla_recurrente', 'proveedor'
   ];
@@ -130,12 +132,12 @@ async function forceSeed() {
       empresa_id INT,
       area_solicitante VARCHAR(100),
       persona_solicitante VARCHAR(150),
-      medio_solicitud ENUM('Plataforma','WhatsApp','Llamada','Correo','Presencial','Automático (Recurrente)') DEFAULT 'Plataforma',
+      medio_solicitud ENUM('Plataforma','WhatsApp','Llamada','Correo','Presencial','Automático (Recurrente)','Automático (Inventario)') DEFAULT 'Plataforma',
       fecha_final_tentativa DATETIME,
       avance_proceso INT DEFAULT 0,
       observaciones TEXT,
       prioridad ENUM('Baja','Media','Alta','Critica') DEFAULT 'Media',
-      estado ENUM('Nuevo','Pendiente','Pruebas','Finalizada','En Proceso') DEFAULT 'Nuevo',
+      estado ENUM('Nuevo','Pendiente','Pruebas','Finalizada','En Proceso','Escalado a Proyecto') DEFAULT 'Nuevo',
       bitacora_dinamica JSON,
       creador_id INT NOT NULL,
       tecnico_id INT,
@@ -159,21 +161,115 @@ async function forceSeed() {
       nombre VARCHAR(200) NOT NULL,
       descripcion TEXT,
       fecha_inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      fecha_fin_estimada DATETIME
+      fecha_fin_estimada DATETIME NOT NULL,
+      avance_porcentaje INT DEFAULT 0,
+      estado ENUM('Stand By', 'Sin Iniciar', 'En Proceso', 'Pruebas', 'Finalizado') DEFAULT 'Sin Iniciar',
+      tipo_proyecto VARCHAR(100) DEFAULT 'Otro',
+      creador_id INT NOT NULL,
+      ticket_origen_id INT DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (creador_id) REFERENCES usuario(id),
+      FOREIGN KEY (ticket_origen_id) REFERENCES ticket(id) ON DELETE SET NULL
     );
 
-    CREATE TABLE tarea_interna (
+    CREATE TABLE tarea_proyecto (
       id INT AUTO_INCREMENT PRIMARY KEY,
+      proyecto_id INT NOT NULL,
       titulo VARCHAR(200) NOT NULL,
       descripcion TEXT,
-      estado ENUM('Pendiente','En Progreso','Resuelto') DEFAULT 'Pendiente',
-      proyecto_id INT NOT NULL,
-      ticket_origen_id INT,
+      fecha_inicio DATETIME DEFAULT CURRENT_TIMESTAMP,
+      fecha_fin DATETIME NOT NULL,
+      avance_porcentaje INT DEFAULT 0,
+      estado ENUM('Stand By', 'Sin Iniciar', 'En Proceso', 'Pruebas', 'Finalizado') DEFAULT 'Sin Iniciar',
       responsable_id INT NOT NULL,
+      ticket_origen_id INT DEFAULT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (proyecto_id) REFERENCES proyecto(id) ON DELETE CASCADE,
-      FOREIGN KEY (ticket_origen_id) REFERENCES ticket(id),
+      FOREIGN KEY (responsable_id) REFERENCES usuario(id),
+      FOREIGN KEY (ticket_origen_id) REFERENCES ticket(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE subtarea_proyecto (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      tarea_id INT NOT NULL,
+      titulo VARCHAR(200) NOT NULL,
+      descripcion TEXT,
+      fecha_inicio DATETIME DEFAULT CURRENT_TIMESTAMP,
+      fecha_fin DATETIME NOT NULL,
+      avance_porcentaje INT DEFAULT 0,
+      estado ENUM('Stand By', 'Sin Iniciar', 'En Proceso', 'Pruebas', 'Finalizado') DEFAULT 'Sin Iniciar',
+      responsable_id INT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (tarea_id) REFERENCES tarea_proyecto(id) ON DELETE CASCADE,
       FOREIGN KEY (responsable_id) REFERENCES usuario(id)
+    );
+
+    CREATE TABLE proyecto_comentario (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      autor_id INT NOT NULL,
+      proyecto_id INT DEFAULT NULL,
+      tarea_id INT DEFAULT NULL,
+      subtarea_id INT DEFAULT NULL,
+      contenido TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (autor_id) REFERENCES usuario(id),
+      FOREIGN KEY (proyecto_id) REFERENCES proyecto(id) ON DELETE CASCADE,
+      FOREIGN KEY (tarea_id) REFERENCES tarea_proyecto(id) ON DELETE CASCADE,
+      FOREIGN KEY (subtarea_id) REFERENCES subtarea_proyecto(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE proyecto_archivo (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      nombre_original VARCHAR(255) NOT NULL,
+      nombre_guardado VARCHAR(255) NOT NULL,
+      mimetype VARCHAR(150),
+      tamano_bytes INT,
+      autor_id INT NOT NULL,
+      proyecto_id INT DEFAULT NULL,
+      tarea_id INT DEFAULT NULL,
+      subtarea_id INT DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (autor_id) REFERENCES usuario(id),
+      FOREIGN KEY (proyecto_id) REFERENCES proyecto(id) ON DELETE CASCADE,
+      FOREIGN KEY (tarea_id) REFERENCES tarea_proyecto(id) ON DELETE CASCADE,
+      FOREIGN KEY (subtarea_id) REFERENCES subtarea_proyecto(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE proyecto_historial (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      proyecto_id INT NOT NULL,
+      usuario_id INT NOT NULL,
+      descripcion_cambio TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (proyecto_id) REFERENCES proyecto(id) ON DELETE CASCADE,
+      FOREIGN KEY (usuario_id) REFERENCES usuario(id)
+    );
+
+    CREATE TABLE chat_canal (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      nombre VARCHAR(100) NOT NULL UNIQUE,
+      is_private BOOLEAN DEFAULT FALSE,
+      creador_id INT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (creador_id) REFERENCES usuario(id)
+    );
+
+    CREATE TABLE chat_canal_miembro (
+      canal_id INT NOT NULL,
+      usuario_id INT NOT NULL,
+      PRIMARY KEY (canal_id, usuario_id),
+      FOREIGN KEY (canal_id) REFERENCES chat_canal(id) ON DELETE CASCADE,
+      FOREIGN KEY (usuario_id) REFERENCES usuario(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE chat_mensaje (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      canal_id INT NOT NULL,
+      usuario_id INT NOT NULL,
+      mensaje TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (canal_id) REFERENCES chat_canal(id) ON DELETE CASCADE,
+      FOREIGN KEY (usuario_id) REFERENCES usuario(id) ON DELETE CASCADE
     );
 
     CREATE TABLE plantilla_recurrente (
@@ -274,6 +370,87 @@ async function forceSeed() {
   if (condadoRows.length > 0) {
     await conn.query(`INSERT INTO usuario_empresa (usuario_id, empresa_id) VALUES (?, ?)`, [userResult.insertId, condadoRows[0].id]);
   }
+
+  console.log('🌱 Creando canales de chat mock...');
+  // 1. Canal General (Público)
+  const [generalCanal]: any = await conn.query(
+    `INSERT INTO chat_canal (nombre, is_private, creador_id) VALUES (?, ?, ?)`,
+    ['general', false, adminId]
+  );
+  // 2. Canal Directores (Privado)
+  const [directoresCanal]: any = await conn.query(
+    `INSERT INTO chat_canal (nombre, is_private, creador_id) VALUES (?, ?, ?)`,
+    ['directores', true, adminId]
+  );
+  // Unir miembros al canal privado
+  await conn.query(`INSERT INTO chat_canal_miembro (canal_id, usuario_id) VALUES (?, ?)`, [directoresCanal.insertId, adminId]);
+  await conn.query(`INSERT INTO chat_canal_miembro (canal_id, usuario_id) VALUES (?, ?)`, [directoresCanal.insertId, santiResult.insertId]);
+
+  console.log('🌱 Insertando mensajes de chat mock...');
+  await conn.query(
+    `INSERT INTO chat_mensaje (canal_id, usuario_id, mensaje) VALUES (?, ?, ?)`,
+    [generalCanal.insertId, adminId, '¡Bienvenidos al chat oficial de SMO IT CORE! 🚀']
+  );
+  await conn.query(
+    `INSERT INTO chat_mensaje (canal_id, usuario_id, mensaje) VALUES (?, ?, ?)`,
+    [generalCanal.insertId, santiResult.insertId, 'Excelente. Reportándose para soporte semanal. 🫡']
+  );
+
+  console.log('🌱 Creando proyectos mock...');
+  const [proy1]: any = await conn.query(
+    `INSERT INTO proyecto (nombre, descripcion, fecha_inicio, fecha_fin_estimada, avance_porcentaje, estado, tipo_proyecto, creador_id)
+     VALUES (?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 10 DAY), 0, 'En Proceso', 'Infraestructura', ?)`,
+    ['Renovación Servidor Central SMO', 'Migración del servidor principal físico de la sede a un clúster virtualizado.', adminId]
+  );
+
+  const [proy2]: any = await conn.query(
+    `INSERT INTO proyecto (nombre, descripcion, fecha_inicio, fecha_fin_estimada, avance_porcentaje, estado, tipo_proyecto, creador_id)
+     VALUES (?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 15 DAY), 0, 'Sin Iniciar', 'Desarrollo', ?)`,
+    ['Migración Correo Corporativo a Microsoft 365', 'Traspaso de cuentas POP3/IMAP locales hacia la nube de Microsoft 365.', adminId]
+  );
+
+  console.log('🌱 Creando tareas de proyecto mock...');
+  const [t1]: any = await conn.query(
+    `INSERT INTO tarea_proyecto (proyecto_id, titulo, descripcion, fecha_inicio, fecha_fin, avance_porcentaje, estado, responsable_id)
+     VALUES (?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 5 DAY), 0, 'En Proceso', ?)`,
+    [proy1.insertId, 'Configurar Servidores DNS', 'Crear y validar zonas DNS, registros MX y SPF en Cloudflare.', santiResult.insertId]
+  );
+
+  const [t2]: any = await conn.query(
+    `INSERT INTO tarea_proyecto (proyecto_id, titulo, descripcion, fecha_inicio, fecha_fin, avance_porcentaje, estado, responsable_id)
+     VALUES (?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 8 DAY), 0, 'Sin Iniciar', ?)`,
+    [proy2.insertId, 'Auditoría de Buzones de Correo', 'Levantamiento de capacidades de disco y contraseñas de los usuarios actuales.', fideResult.insertId]
+  );
+
+  console.log('🌱 Creando subtareas de proyecto mock...');
+  await conn.query(
+    `INSERT INTO subtarea_proyecto (tarea_id, titulo, descripcion, fecha_inicio, fecha_fin, avance_porcentaje, estado, responsable_id)
+     VALUES (?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 3 DAY), 0, 'En Proceso', ?),
+            (?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 4 DAY), 0, 'Sin Iniciar', ?)`,
+    [
+      t1.insertId, 'Revisar Zonas DNS Actuales', 'Exportar archivo BIND de configuración de DNS vieja.', santiResult.insertId,
+      t1.insertId, 'Validar Propagación DNS global', 'Comprobación vía herramientas tipo DNSChecker.', santiResult.insertId
+    ]
+  );
+
+  console.log('🌱 Creando comentarios y auditoría mock...');
+  await conn.query(
+    `INSERT INTO proyecto_comentario (autor_id, proyecto_id, contenido)
+     VALUES (?, ?, ?)`,
+    [adminId, proy1.insertId, 'Favor prestar especial atención a los tiempos límite de la renovación. ¡Buen trabajo!']
+  );
+
+  await conn.query(
+    `INSERT INTO proyecto_historial (proyecto_id, usuario_id, descripcion_cambio)
+     VALUES (?, ?, ?)`,
+    [proy1.insertId, adminId, 'El usuario Administrador Sistema creó el proyecto en estado Sin Iniciar']
+  );
+
+  await conn.query(
+    `INSERT INTO proyecto_historial (proyecto_id, usuario_id, descripcion_cambio)
+     VALUES (?, ?, ?)`,
+    [proy1.insertId, adminId, 'El usuario Administrador Sistema cambió el estado del proyecto a En Proceso']
+  );
 
   console.log('\n✅ Base de datos reiniciada exitosamente.');
   console.log('   📧 admin@smo.com   | 🔑 admin123 (ADMIN)');

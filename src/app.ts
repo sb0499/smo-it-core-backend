@@ -9,17 +9,22 @@ import { usuariosRouter } from './routes/usuarios.routes';
 import { ticketsRouter } from './routes/tickets.routes';
 import { inventariosRouter } from './routes/inventarios.routes';
 import { proyectosRouter } from './routes/proyectos.routes';
+import chatsRouter from './routes/chats.routes';
 import { guardiasRouter } from './routes/guardias.routes';
 import { personasRouter } from './routes/personas.routes';
 import { consumiblesRouter } from './routes/consumibles.routes';
 import { plantillasRouter } from './routes/plantillas.routes';
 import { proveedoresRouter } from './routes/proveedores.routes';
+import path from 'path';
 
 const app = express();
 
 app.use(cors({ origin: '*', credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Habilitar descargas estáticas físicas de la carpeta de uploads
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 const swaggerOptions: swaggerJsdoc.Options = {
   definition: {
@@ -57,6 +62,7 @@ app.use(`${API}/usuarios`, usuariosRouter);
 app.use(`${API}/tickets`, ticketsRouter);
 app.use(`${API}/inventarios`, inventariosRouter);
 app.use(`${API}/proyectos`, proyectosRouter);
+app.use(`${API}/chats`, chatsRouter);
 app.use(`${API}/guardias`, guardiasRouter);
 app.use(`${API}/personas`, personasRouter);
 app.use(`${API}/consumibles`, consumiblesRouter);
