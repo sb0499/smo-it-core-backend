@@ -27,7 +27,7 @@ const swaggerOptions: swaggerJsdoc.Options = {
     info: {
       title: config.PROJECT_NAME,
       version: config.VERSION,
-      description: 'API REST del sistema IT CORE de SMO - Migrado a Node.js + Express + TypeScript'
+      description: 'API REST del sistema IT CORE de SMO'
     },
     servers: [{ url: `http://localhost:${config.PORT}`, description: 'Servidor de desarrollo' }],
     components: {
