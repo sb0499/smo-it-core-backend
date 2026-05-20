@@ -1,6 +1,8 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import * as proyectoService from '../services/proyecto.service';
+import path from 'path';
+import fs from 'fs';
 
 // --- CONTROLLERS DE PROYECTO ---
 export const getProyectos = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -340,6 +342,31 @@ export const enviarReporteSemanalAdmin = async (req: AuthRequest, res: Response)
   try {
     await proyectoService.enviarReporteSemanalAdmin();
     res.json({ message: 'Reportes semanales de correo enviados a todos los administradores activos.' });
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+};
+
+export const descargarArchivo = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const id = parseInt(req.params.archivo_id);
+    if (isNaN(id)) {
+      res.status(400).json({ detail: 'ID de archivo inválido.' });
+      return;
+    }
+    const archivo = await proyectoService.getArchivoById(id);
+    if (!archivo) {
+      res.status(404).json({ detail: 'Archivo no encontrado.' });
+      return;
+    }
+
+    const filepath = path.join(process.cwd(), 'uploads', archivo.nombre_guardado);
+    if (!fs.existsSync(filepath)) {
+      res.status(404).json({ detail: 'El archivo físico no se encuentra en el servidor.' });
+      return;
+    }
+
+    res.download(filepath, archivo.nombre_original);
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }

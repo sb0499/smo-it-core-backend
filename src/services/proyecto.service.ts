@@ -712,6 +712,11 @@ export const addArchivo = async (data: { nombre_original: string; nombre_guardad
   return inserted[0];
 };
 
+export const getArchivoById = async (id: number) => {
+  const [rows] = await pool.query<RowDataPacket[]>(`SELECT * FROM proyecto_archivo WHERE id = ?`, [id]);
+  return rows[0] || null;
+};
+
 // --- ESCALAR TICKET A PROYECTO ---
 export const escalarTicketAProyecto = async (ticketId: number, data: { nombre: string; descripcion?: string; fecha_fin_estimada: string; tipo_proyecto?: string }, currentUser: any) => {
   const [ticketRows] = await pool.query<RowDataPacket[]>(`SELECT * FROM ticket WHERE id = ?`, [ticketId]);

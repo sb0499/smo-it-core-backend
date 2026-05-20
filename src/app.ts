@@ -16,6 +16,7 @@ import { consumiblesRouter } from './routes/consumibles.routes';
 import { plantillasRouter } from './routes/plantillas.routes';
 import { proveedoresRouter } from './routes/proveedores.routes';
 import { empresasRouter } from './routes/empresas.routes';
+import reportesRouter from './routes/reportes.routes';
 import path from 'path';
 
 const app = express();
@@ -61,6 +62,7 @@ const API = config.API_V1_STR;
 app.use(`${API}/auth`, authRouter);
 app.use(`${API}/usuarios`, usuariosRouter);
 app.use(`${API}/tickets`, ticketsRouter);
+app.use(`${API}/reportes`, reportesRouter);
 app.use(`${API}/inventarios`, inventariosRouter);
 app.use(`${API}/proyectos`, proyectosRouter);
 app.use(`${API}/chats`, chatsRouter);

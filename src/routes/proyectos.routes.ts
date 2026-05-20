@@ -362,6 +362,24 @@ proyectosRouter.post('/archivos', requireAuth, upload.single('archivo'), ctrl.ad
 
 /**
  * @openapi
+ * /api/v1/proyectos/archivos/{archivo_id}:
+ *   get:
+ *     tags: [Proyectos]
+ *     summary: Descargar un archivo adjunto
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: archivo_id
+ *         required: true
+ *         schema: { type: integer }
+ *     responses:
+ *       200:
+ *         description: Archivo descargado exitosamente
+ */
+proyectosRouter.get('/archivos/:archivo_id', requireAuth, ctrl.descargarArchivo);
+
+/**
+ * @openapi
  * /api/v1/proyectos/escalar-ticket/{ticket_id}:
  *   post:
  *     tags: [Proyectos]

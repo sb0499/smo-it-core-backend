@@ -40,10 +40,6 @@ export const descargarActa = async (req: AuthRequest, res: Response): Promise<vo
     res.status(404).json({ detail: 'Movimiento no encontrado' });
     return;
   }
-  if (!movimiento.persona_recibe_nombre) {
-    res.status(400).json({ detail: 'Este movimiento no tiene una persona receptora (¿fue una devolución a bodega?)' });
-    return;
-  }
   const pdfBuffer = await generarActaMovimiento(movimiento);
   const nombreArchivo = `Acta_${movimiento.activo_codigo}_${movimiento.persona_recibe_cedula}.pdf`;
   res.setHeader('Content-Type', 'application/pdf');
