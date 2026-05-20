@@ -1,8 +1,10 @@
 import { Router } from 'express';
-import { requireAuth, requireAdmin } from '../middlewares/auth.middleware';
+import { requireAuth, requireAdminOrTecnico } from '../middlewares/auth.middleware';
 import * as ctrl from '../controllers/proveedor.controller';
 
 export const proveedoresRouter = Router();
+
+proveedoresRouter.use(requireAuth, requireAdminOrTecnico);
 
 /**
  * @openapi
@@ -62,7 +64,7 @@ proveedoresRouter.get('/:id', requireAuth, ctrl.getProveedorById);
  *       400:
  *         description: Entrada duplicada o datos inválidos
  */
-proveedoresRouter.post('/', requireAuth, requireAdmin, ctrl.createProveedor);
+proveedoresRouter.post('/', requireAuth, requireAdminOrTecnico, ctrl.createProveedor);
 
 /**
  * @openapi
@@ -92,7 +94,7 @@ proveedoresRouter.post('/', requireAuth, requireAdmin, ctrl.createProveedor);
  *       404:
  *         description: Proveedor no encontrado
  */
-proveedoresRouter.put('/:id', requireAuth, requireAdmin, ctrl.updateProveedor);
+proveedoresRouter.put('/:id', requireAuth, requireAdminOrTecnico, ctrl.updateProveedor);
 
 /**
  * @openapi
@@ -112,4 +114,4 @@ proveedoresRouter.put('/:id', requireAuth, requireAdmin, ctrl.updateProveedor);
  *       404:
  *         description: Proveedor no encontrado
  */
-proveedoresRouter.delete('/:id', requireAuth, requireAdmin, ctrl.deleteProveedor);
+proveedoresRouter.delete('/:id', requireAuth, requireAdminOrTecnico, ctrl.deleteProveedor);

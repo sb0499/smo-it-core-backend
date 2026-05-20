@@ -5,7 +5,7 @@ import { RowDataPacket, ResultSetHeader } from 'mysql2';
 export const getUsuarios = async (skip = 0, limit = 100) => {
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT u.id, u.email, u.nombre_completo, u.is_active, u.created_at, u.updated_at,
-            u.rol_id, r.nombre as rol_nombre,
+            u.rol_id, r.nombre as rol_nombre, u.must_change_password,
             GROUP_CONCAT(e.id) as empresa_ids,
             GROUP_CONCAT(e.nombre SEPARATOR ',') as empresa_nombres
      FROM usuario u
@@ -18,6 +18,7 @@ export const getUsuarios = async (skip = 0, limit = 100) => {
   );
   return rows.map(u => ({
     ...u,
+    rol: u.rol_nombre,
     empresa_ids: u.empresa_ids ? u.empresa_ids.split(',').map(Number) : [],
     empresa_nombres: u.empresa_nombres ? u.empresa_nombres.split(',') : []
   }));
@@ -45,6 +46,7 @@ export const createUsuario = async (data: {
   nombre_completo: string;
   is_active: boolean;
   rol_id: number;
+  must_change_password?: boolean;
   empresa_ids?: number[];
 }) => {
   const hashed = await getPasswordHash(data.password);
@@ -52,8 +54,8 @@ export const createUsuario = async (data: {
   try {
     await conn.beginTransaction();
     const [result] = await conn.query<ResultSetHeader>(
-      `INSERT INTO usuario (email, hashed_password, nombre_completo, is_active, rol_id) VALUES (?, ?, ?, ?, ?)`,
-      [data.email, hashed, data.nombre_completo, data.is_active ?? true, data.rol_id]
+      `INSERT INTO usuario (email, hashed_password, nombre_completo, is_active, rol_id, must_change_password) VALUES (?, ?, ?, ?, ?, ?)`,
+      [data.email, hashed, data.nombre_completo, data.is_active ?? true, data.rol_id, data.must_change_password ?? true]
     );
     const userId = result.insertId;
     if (data.empresa_ids && data.empresa_ids.length > 0) {
@@ -77,6 +79,7 @@ export const updateUsuario = async (userId: number, data: {
   nombre_completo?: string;
   is_active?: boolean;
   rol_id?: number;
+  must_change_password?: boolean;
   empresa_ids?: number[];
 }) => {
   const conn = await pool.getConnection();
@@ -88,6 +91,7 @@ export const updateUsuario = async (userId: number, data: {
     if (data.nombre_completo !== undefined) { sets.push('nombre_completo = ?'); vals.push(data.nombre_completo); }
     if (data.is_active !== undefined)       { sets.push('is_active = ?');       vals.push(data.is_active); }
     if (data.rol_id !== undefined)          { sets.push('rol_id = ?');          vals.push(data.rol_id); }
+    if (data.must_change_password !== undefined) { sets.push('must_change_password = ?'); vals.push(data.must_change_password); }
     if (data.password) {
       sets.push('hashed_password = ?');
       vals.push(await getPasswordHash(data.password));

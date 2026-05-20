@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requireAuth, requireAdmin } from '../middlewares/auth.middleware';
+import { requireAuth, requireAdminOrTecnico } from '../middlewares/auth.middleware';
 import * as ctrl from '../controllers/guardia.controller';
 
 export const guardiasRouter = Router();
@@ -29,7 +29,7 @@ guardiasRouter.get('/', requireAuth, ctrl.getGuardias);
  * /api/v1/guardias/:
  *   post:
  *     tags: [Guardias]
- *     summary: Crear o actualizar guardia (solo ADMIN)
+ *     summary: Crear o actualizar guardia (ADMIN - TECNICO)
  *     description: Si ya existe una guardia para esa fecha, la actualiza con el nuevo técnico.
  *     security: [{ bearerAuth: [] }]
  *     requestBody:
@@ -47,14 +47,14 @@ guardiasRouter.get('/', requireAuth, ctrl.getGuardias);
  *       201:
  *         description: Guardia creada o actualizada
  */
-guardiasRouter.post('/', requireAuth, requireAdmin, ctrl.createGuardia);
+guardiasRouter.post('/', requireAuth, requireAdminOrTecnico, ctrl.createGuardia);
 
 /**
  * @openapi
  * /api/v1/guardias/{guardia_id}:
  *   delete:
  *     tags: [Guardias]
- *     summary: Eliminar guardia (solo ADMIN)
+ *     summary: Eliminar guardia (ADMIN - TECNICO)
  *     security: [{ bearerAuth: [] }]
  *     parameters:
  *       - in: path
@@ -67,4 +67,4 @@ guardiasRouter.post('/', requireAuth, requireAdmin, ctrl.createGuardia);
  *       404:
  *         description: Guardia no encontrada
  */
-guardiasRouter.delete('/:guardia_id', requireAuth, requireAdmin, ctrl.deleteGuardia);
+guardiasRouter.delete('/:guardia_id', requireAuth, requireAdminOrTecnico, ctrl.deleteGuardia);

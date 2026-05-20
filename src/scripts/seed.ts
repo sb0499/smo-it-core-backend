@@ -52,6 +52,7 @@ async function forceSeed() {
       nombre_completo VARCHAR(150) NOT NULL,
       is_active BOOLEAN DEFAULT TRUE,
       rol_id INT NOT NULL,
+      must_change_password BOOLEAN DEFAULT FALSE,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       FOREIGN KEY (rol_id) REFERENCES rol(id)
@@ -334,8 +335,8 @@ async function forceSeed() {
 
   // 1. Santi Condado (CONDADO)
   const [santiResult]: any = await conn.query(
-    `INSERT INTO usuario (email, hashed_password, nombre_completo, is_active, rol_id) VALUES (?, ?, ?, ?, ?)`,
-    ['santi@smo.com', techHash, 'Santi Condado', true, techRolId]
+    `INSERT INTO usuario (email, hashed_password, nombre_completo, is_active, rol_id, must_change_password) VALUES (?, ?, ?, ?, ?, ?)`,
+    ['santi@smo.com', techHash, 'Santi Condado', true, techRolId, true]
   );
   const [condadoRows]: any = await conn.query(`SELECT id FROM empresa WHERE nombre = 'CONDADO'`);
   if (condadoRows.length > 0) {
@@ -344,8 +345,8 @@ async function forceSeed() {
 
   // 2. Fide Scala (SCALA)
   const [fideResult]: any = await conn.query(
-    `INSERT INTO usuario (email, hashed_password, nombre_completo, is_active, rol_id) VALUES (?, ?, ?, ?, ?)`,
-    ['fide@smo.com', techHash, 'Fide Scala', true, techRolId]
+    `INSERT INTO usuario (email, hashed_password, nombre_completo, is_active, rol_id, must_change_password) VALUES (?, ?, ?, ?, ?, ?)`,
+    ['fide@smo.com', techHash, 'Fide Scala', true, techRolId, true]
   );
   const [scalaRows]: any = await conn.query(`SELECT id FROM empresa WHERE nombre = 'SCALA'`);
   if (scalaRows.length > 0) {
@@ -354,12 +355,36 @@ async function forceSeed() {
 
   // 3. Gabo CCI (CCI)
   const [gaboResult]: any = await conn.query(
-    `INSERT INTO usuario (email, hashed_password, nombre_completo, is_active, rol_id) VALUES (?, ?, ?, ?, ?)`,
-    ['gabo@smo.com', techHash, 'Gabo CCI', true, techRolId]
+    `INSERT INTO usuario (email, hashed_password, nombre_completo, is_active, rol_id, must_change_password) VALUES (?, ?, ?, ?, ?, ?)`,
+    ['gabo@smo.com', techHash, 'Gabo CCI', true, techRolId, true]
   );
   const [cciRows]: any = await conn.query(`SELECT id FROM empresa WHERE nombre = 'CCI'`);
   if (cciRows.length > 0) {
     await conn.query(`INSERT INTO usuario_empresa (usuario_id, empresa_id) VALUES (?, ?)`, [gaboResult.insertId, cciRows[0].id]);
+  }
+
+  // 9 additional technicians to make a total of 12 profiles
+  const additionalTechs = [
+    { email: 'carlos@smo.com', name: 'Carlos Portoshopping', company: 'PORTOSHOPPING' },
+    { email: 'ana@smo.com', name: 'Ana Gametown', company: 'GAMETOWN' },
+    { email: 'pedro@smo.com', name: 'Pedro Aparca', company: 'APPARCA' },
+    { email: 'laura@smo.com', name: 'Laura Datatrust', company: 'DATATRUST' },
+    { email: 'diego@smo.com', name: 'Diego Teatro', company: 'EL TEATRO' },
+    { email: 'juan@smo.com', name: 'Juan Pomasqui', company: 'POMASQUI' },
+    { email: 'maria@smo.com', name: 'Maria Portocarrero', company: 'PORTOSHOPPING' },
+    { email: 'andres@smo.com', name: 'Andres Lopez', company: 'SMO' },
+    { email: 'sofia@smo.com', name: 'Sofia Martinez', company: 'SMO' }
+  ];
+
+  for (const t of additionalTechs) {
+    const [res]: any = await conn.query(
+      `INSERT INTO usuario (email, hashed_password, nombre_completo, is_active, rol_id, must_change_password) VALUES (?, ?, ?, ?, ?, ?)`,
+      [t.email, techHash, t.name, true, techRolId, true]
+    );
+    const [emp]: any = await conn.query(`SELECT id FROM empresa WHERE nombre = ?`, [t.company]);
+    if (emp.length > 0) {
+      await conn.query(`INSERT INTO usuario_empresa (usuario_id, empresa_id) VALUES (?, ?)`, [res.insertId, emp[0].id]);
+    }
   }
 
   // 4. Cliente Condado (USUARIO)

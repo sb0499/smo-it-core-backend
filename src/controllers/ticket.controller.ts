@@ -5,7 +5,7 @@ import * as ticketService from '../services/ticket.service';
 export const getTickets = async (req: AuthRequest, res: Response): Promise<void> => {
   const skip = parseInt(req.query.skip as string) || 0;
   const limit = parseInt(req.query.limit as string) || 100;
-  const tickets = await ticketService.getTickets(skip, limit);
+  const tickets = await ticketService.getTickets(req.currentUser, skip, limit);
   res.json(tickets);
 };
 

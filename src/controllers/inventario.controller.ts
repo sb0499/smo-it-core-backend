@@ -72,3 +72,10 @@ export const cambiarEstado = async (req: AuthRequest, res: Response): Promise<vo
   }
   res.json(activo);
 };
+
+export const getMovimientosGlobal = async (req: AuthRequest, res: Response): Promise<void> => {
+  const skip = parseInt(req.query.skip as string) || 0;
+  const limit = parseInt(req.query.limit as string) || 100;
+  const movimientos = await inventarioService.getMovimientosGlobal(skip, limit);
+  res.json(movimientos);
+};

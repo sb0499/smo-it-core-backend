@@ -3,15 +3,27 @@ import { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { enviarCorreo } from './notificacion.service';
 import ExcelJS from 'exceljs';
 
-export const getTickets = async (skip = 0, limit = 100) => {
-  const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT t.*,
-            JSON_UNQUOTE(t.bitacora_dinamica) as bitacora_dinamica
-     FROM ticket t
-     ORDER BY t.created_at DESC
-     LIMIT ? OFFSET ?`,
-    [limit, skip]
-  );
+export const getTickets = async (currentUser: any, skip = 0, limit = 100) => {
+  let query = `
+    SELECT t.*,
+           JSON_UNQUOTE(t.bitacora_dinamica) as bitacora_dinamica
+    FROM ticket t
+  `;
+  const params: any[] = [];
+
+  if (currentUser.rol_nombre === 'TECNICO') {
+    query += ` WHERE t.tecnico_id = ?`;
+    params.push(currentUser.id);
+  } else if (currentUser.rol_nombre === 'USUARIO') {
+    query += ` WHERE t.creador_id = ?`;
+    params.push(currentUser.id);
+  }
+
+  query += ` ORDER BY t.created_at DESC
+             LIMIT ? OFFSET ?`;
+  params.push(limit, skip);
+
+  const [rows] = await pool.query<RowDataPacket[]>(query, params);
   return rows.map(r => ({
     ...r,
     bitacora_dinamica: typeof r.bitacora_dinamica === 'string' 
@@ -256,7 +268,7 @@ export const enviarRecordatoriosCierreDiario = async () => {
     `SELECT t.id, t.titulo, t.estado, u.email as tecnico_email, u.nombre_completo as tecnico_nombre
      FROM ticket t
      JOIN usuario u ON t.tecnico_id = u.id
-     WHERE t.estado IN ('Nuevo', 'Pendiente', 'Pruebas') AND u.is_active = 1`
+     WHERE t.estado IN ('Nuevo', 'En Proceso', 'Pendiente', 'Pruebas') AND u.is_active = 1`
   );
 
   if (tickets.length === 0) {

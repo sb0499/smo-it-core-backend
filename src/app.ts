@@ -15,6 +15,7 @@ import { personasRouter } from './routes/personas.routes';
 import { consumiblesRouter } from './routes/consumibles.routes';
 import { plantillasRouter } from './routes/plantillas.routes';
 import { proveedoresRouter } from './routes/proveedores.routes';
+import { empresasRouter } from './routes/empresas.routes';
 import path from 'path';
 
 const app = express();
@@ -68,6 +69,7 @@ app.use(`${API}/personas`, personasRouter);
 app.use(`${API}/consumibles`, consumiblesRouter);
 app.use(`${API}/plantillas`, plantillasRouter);
 app.use(`${API}/proveedores`, proveedoresRouter);
+app.use(`${API}/empresas`, empresasRouter);
 
 // Root health check
 app.get('/', (_req, res) => {

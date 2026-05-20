@@ -10,13 +10,20 @@ export interface AuthRequest extends Request {
 
 export const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
+    let token = '';
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
+    } else if (req.query.token && typeof req.query.token === 'string') {
+      token = req.query.token;
+    }
+
+    if (!token) {
       res.status(401).json({ detail: 'No autenticado' });
       return;
     }
 
-    const token = authHeader.split(' ')[1];
     const decoded = verifyToken(token);
 
     if (!decoded) {
@@ -25,7 +32,12 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
     }
 
     // Verify user still exists and is active
-    const [rows] = await pool.query<RowDataPacket[]>('SELECT * FROM usuario WHERE id = ?', [decoded.id]);
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT u.*, r.nombre as rol_nombre FROM usuario u
+       JOIN rol r ON u.rol_id = r.id
+       WHERE u.id = ?`,
+      [decoded.id]
+    );
     if (rows.length === 0) {
       res.status(401).json({ detail: 'El usuario ya no existe' });
       return;

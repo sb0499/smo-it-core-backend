@@ -1,8 +1,10 @@
 import { Router } from 'express';
-import { requireAuth } from '../middlewares/auth.middleware';
+import { requireAuth, requireAdminOrTecnico } from '../middlewares/auth.middleware';
 import * as ctrl from '../controllers/consumible.controller';
 
 export const consumiblesRouter = Router();
+
+consumiblesRouter.use(requireAuth, requireAdminOrTecnico);
 
 /**
  * @openapi

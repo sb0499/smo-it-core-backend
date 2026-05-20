@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requireAuth, requireAdmin } from '../middlewares/auth.middleware';
+import { requireAuth, requireAdmin, requireAdminOrTecnico } from '../middlewares/auth.middleware';
 import * as ctrl from '../controllers/usuario.controller';
 
 export const usuariosRouter = Router();
@@ -9,7 +9,7 @@ export const usuariosRouter = Router();
  * /api/v1/usuarios/:
  *   get:
  *     tags: [Usuarios]
- *     summary: Listar todos los usuarios (solo ADMIN)
+ *     summary: Listar todos los usuarios (ADMIN y TECNICO)
  *     security: [{ bearerAuth: [] }]
  *     parameters:
  *       - in: query
@@ -26,7 +26,7 @@ export const usuariosRouter = Router();
  *       403:
  *         description: Sin permisos
  */
-usuariosRouter.get('/', requireAuth, requireAdmin, ctrl.getUsuarios);
+usuariosRouter.get('/', requireAuth, requireAdminOrTecnico, ctrl.getUsuarios);
 
 /**
  * @openapi

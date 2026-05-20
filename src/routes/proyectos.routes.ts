@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requireAuth } from '../middlewares/auth.middleware';
+import { requireAuth, requireAdminOrTecnico } from '../middlewares/auth.middleware';
 import * as ctrl from '../controllers/proyecto.controller';
 import multer from 'multer';
 import path from 'path';
@@ -25,6 +25,8 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 export const proyectosRouter = Router();
+
+proyectosRouter.use(requireAuth, requireAdminOrTecnico);
 
 /**
  * @openapi

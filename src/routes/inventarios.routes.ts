@@ -26,6 +26,26 @@ inventariosRouter.get('/', requireAuth, ctrl.getActivos);
 
 /**
  * @openapi
+ * /api/v1/inventarios/movimientos/global:
+ *   get:
+ *     tags: [Inventarios]
+ *     summary: Historial global de movimientos de inventario (ADMIN y TECNICO)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: skip
+ *         schema: { type: integer, default: 0 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 100 }
+ *     responses:
+ *       200:
+ *         description: Lista de todos los movimientos de inventario
+ */
+inventariosRouter.get('/movimientos/global', requireAuth, requireAdminOrTecnico, ctrl.getMovimientosGlobal);
+
+/**
+ * @openapi
  * /api/v1/inventarios/:
  *   post:
  *     tags: [Inventarios]

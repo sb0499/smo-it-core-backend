@@ -1,8 +1,10 @@
 import { Router } from 'express';
-import { requireAuth } from '../middlewares/auth.middleware';
+import { requireAuth, requireAdminOrTecnico } from '../middlewares/auth.middleware';
 import * as ctrl from '../controllers/persona.controller';
 
 export const personasRouter = Router();
+
+personasRouter.use(requireAuth, requireAdminOrTecnico);
 
 /**
  * @openapi

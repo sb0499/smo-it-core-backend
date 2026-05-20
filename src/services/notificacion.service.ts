@@ -12,7 +12,7 @@ const transporter = nodemailer.createTransport({
 });
 
 export const enviarCorreo = async (emailTo: string, subject: string, body: string): Promise<void> => {
-  if (!config.SMTP_HOST || !config.SMTP_USER || !config.SMTP_PASS) {
+  if (!config.SMTP_HOST || !config.SMTP_USER || !config.SMTP_PASS || config.SMTP_PASS === 'password_falso_123') {
     console.log(`DEBUG: Simulación envío correo a ${emailTo}. Asunto: ${subject}`);
     return;
   }

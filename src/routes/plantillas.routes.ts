@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requireAuth, requireAdmin } from '../middlewares/auth.middleware';
+import { requireAuth, requireAdminOrTecnico } from '../middlewares/auth.middleware';
 import * as ctrl from '../controllers/plantilla.controller';
 
 export const plantillasRouter = Router();
@@ -9,13 +9,13 @@ export const plantillasRouter = Router();
  * /api/v1/plantillas/:
  *   get:
  *     tags: [Plantillas]
- *     summary: Listar todas las plantillas recurrentes (solo ADMIN)
+ *     summary: Listar todas las plantillas recurrentes (ADMIN - TECNICO)
  *     security: [{ bearerAuth: [] }]
  *     responses:
  *       200:
  *         description: Lista de plantillas recurrentes
  */
-plantillasRouter.get('/', requireAuth, requireAdmin, ctrl.getPlantillas);
+plantillasRouter.get('/', requireAuth, requireAdminOrTecnico, ctrl.getPlantillas);
 
 /**
  * @openapi
@@ -35,7 +35,7 @@ plantillasRouter.get('/activas', requireAuth, ctrl.getPlantillasActivas);
  * /api/v1/plantillas/:
  *   post:
  *     tags: [Plantillas]
- *     summary: Crear plantilla recurrente (solo ADMIN)
+ *     summary: Crear plantilla recurrente (ADMIN - TECNICO)
  *     security: [{ bearerAuth: [] }]
  *     requestBody:
  *       required: true
@@ -55,14 +55,14 @@ plantillasRouter.get('/activas', requireAuth, ctrl.getPlantillasActivas);
  *       201:
  *         description: Plantilla creada
  */
-plantillasRouter.post('/', requireAuth, requireAdmin, ctrl.createPlantilla);
+plantillasRouter.post('/', requireAuth, requireAdminOrTecnico, ctrl.createPlantilla);
 
 /**
  * @openapi
  * /api/v1/plantillas/{plantilla_id}:
  *   put:
  *     tags: [Plantillas]
- *     summary: Actualizar plantilla (solo ADMIN)
+ *     summary: Actualizar plantilla (ADMIN - TECNICO)
  *     security: [{ bearerAuth: [] }]
  *     parameters:
  *       - in: path
@@ -87,14 +87,14 @@ plantillasRouter.post('/', requireAuth, requireAdmin, ctrl.createPlantilla);
  *       404:
  *         description: Plantilla no encontrada
  */
-plantillasRouter.put('/:plantilla_id', requireAuth, requireAdmin, ctrl.updatePlantilla);
+plantillasRouter.put('/:plantilla_id', requireAuth, requireAdminOrTecnico, ctrl.updatePlantilla);
 
 /**
  * @openapi
  * /api/v1/plantillas/{plantilla_id}:
  *   delete:
  *     tags: [Plantillas]
- *     summary: Eliminar plantilla (solo ADMIN)
+ *     summary: Eliminar plantilla (ADMIN - TECNICO)
  *     security: [{ bearerAuth: [] }]
  *     parameters:
  *       - in: path
@@ -107,4 +107,4 @@ plantillasRouter.put('/:plantilla_id', requireAuth, requireAdmin, ctrl.updatePla
  *       404:
  *         description: Plantilla no encontrada
  */
-plantillasRouter.delete('/:plantilla_id', requireAuth, requireAdmin, ctrl.deletePlantilla);
+plantillasRouter.delete('/:plantilla_id', requireAuth, requireAdminOrTecnico, ctrl.deletePlantilla);

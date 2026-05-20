@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { login } from '../controllers/auth.controller';
+import { login, changePassword } from '../controllers/auth.controller';
+import { requireAuth } from '../middlewares/auth.middleware';
 
 export const authRouter = Router();
 
@@ -41,3 +42,28 @@ export const authRouter = Router();
  *         description: Credenciales inválidas
  */
 authRouter.post('/login', login);
+
+/**
+ * @openapi
+ * /api/v1/auth/change-password:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Cambiar contraseña
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [newPassword]
+ *             properties:
+ *               currentPassword: { type: string }
+ *               newPassword: { type: string }
+ *     responses:
+ *       200:
+ *         description: Contraseña cambiada
+ *       400:
+ *         description: Datos inválidos
+ */
+authRouter.post('/change-password', requireAuth, changePassword);
