@@ -26,8 +26,8 @@ export const getTickets = async (currentUser: any, skip = 0, limit = 100) => {
   const [rows] = await pool.query<RowDataPacket[]>(query, params);
   return rows.map(r => ({
     ...r,
-    bitacora_dinamica: typeof r.bitacora_dinamica === 'string' 
-      ? JSON.parse(r.bitacora_dinamica) 
+    bitacora_dinamica: typeof r.bitacora_dinamica === 'string'
+      ? JSON.parse(r.bitacora_dinamica)
       : r.bitacora_dinamica || []
   }));
 };
@@ -75,7 +75,7 @@ export const createTicket = async (data: any, currentUser: any) => {
           }
         }
       }
-      
+
       // 2. Si no hay técnico para esa sede, balanceo global
       if (!tecnicoAsignado) {
         const [balanceo] = await pool.query<RowDataPacket[]>(
@@ -100,7 +100,7 @@ export const createTicket = async (data: any, currentUser: any) => {
       if (guardiaRows.length > 0) {
         tecnicoAsignado = guardiaRows[0].tecnico_id;
       }
-      
+
       // Fallback por si no hay guardia registrada en esa fecha
       if (!tecnicoAsignado) {
         const [balanceo] = await pool.query<RowDataPacket[]>(
@@ -135,7 +135,7 @@ export const createTicket = async (data: any, currentUser: any) => {
       bitacora, currentUser.id, tecnicoAsignado
     ]
   );
-  
+
   // Background notifications
   if (tecnicoAsignado) {
     pool.query<RowDataPacket[]>(
@@ -145,7 +145,7 @@ export const createTicket = async (data: any, currentUser: any) => {
         const techEmail = techRows[0].email;
         const techName = techRows[0].nombre_completo;
         enviarCorreo(
-          techEmail, 
+          techEmail,
           `Nuevo Ticket Asignado: ${data.titulo}`,
           `Hola ${techName},\n\nSe te ha asignado un nuevo ticket de soporte:\n\nTítulo: ${data.titulo}\nDescripción: ${data.descripcion}\nCategoría: ${data.categoria}\nPrioridad: ${data.prioridad || 'Media'}\n\nPor favor, ingresa a la plataforma para gestionarlo.`
         ).catch(console.error);
@@ -192,9 +192,9 @@ export const updateTicket = async (ticketId: number, data: any) => {
 
   const sets: string[] = [];
   const vals: any[] = [];
-  const allowed = ['titulo','descripcion','categoria','empresa_id','area_solicitante','persona_solicitante',
-                   'medio_solicitud','fecha_final_tentativa','avance_proceso','observaciones','prioridad',
-                   'estado','tecnico_id'];
+  const allowed = ['titulo', 'descripcion', 'categoria', 'empresa_id', 'area_solicitante', 'persona_solicitante',
+    'medio_solicitud', 'fecha_final_tentativa', 'avance_proceso', 'observaciones', 'prioridad',
+    'estado', 'tecnico_id'];
   for (const field of allowed) {
     if (data[field] !== undefined) { sets.push(`${field} = ?`); vals.push(data[field]); }
   }
@@ -288,8 +288,8 @@ export const enviarRecordatoriosCierreDiario = async () => {
   for (const tech of techMap.values()) {
     const listado = tech.tickets.map(t => `- [${t.estado}] Ticket #${t.id}: ${t.titulo}`).join('\n');
     const body = `Hola ${tech.nombre},\n\nEste es un recordatorio automático para el cierre diario de tus actividades.\n\nTienes los siguientes tickets pendientes que deben ser finalizados o actualizados antes de concluir el día:\n\n${listado}\n\nPor favor, ingresa a la plataforma y cambia el estado a 'Finalizada' si la novedad ya fue resuelta.`;
-    
-    await enviarCorreo(tech.email, `⚠️ Alerta de Cierre Diario: Tickets Pendientes`, body).catch(console.error);
+
+    await enviarCorreo(tech.email, `Alerta de Cierre Diario: Tickets Pendientes`, body).catch(console.error);
     totalTecnicosAlertados++;
   }
 
@@ -432,7 +432,7 @@ export const generarReporteSemanalExcel = async (rolUsuario: string, usuarioId: 
         cell.fill = rowFill;
         cell.border = borderThin;
         cell.font = { name: 'Arial', size: 9 };
-        
+
         // Alineaciones
         if ([1, 4, 5, 9].includes(col)) {
           cell.alignment = centerAlign;
