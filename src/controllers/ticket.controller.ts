@@ -16,7 +16,7 @@ export const createTicket = async (req: AuthRequest, res: Response): Promise<voi
 
 export const updateTicket = async (req: AuthRequest, res: Response): Promise<void> => {
   const ticketId = parseInt(req.params.ticket_id);
-  const ticket = await ticketService.updateTicket(ticketId, req.body);
+  const ticket = await ticketService.updateTicket(ticketId, req.body, req.currentUser);
   if (!ticket) {
     res.status(404).json({ detail: 'Ticket no encontrado' });
     return;
@@ -48,4 +48,9 @@ export const descargarReporteSemanal = async (req: AuthRequest, res: Response): 
 export const ejecutarRecordatorioCierre = async (_req: AuthRequest, res: Response): Promise<void> => {
   const summary = await ticketService.enviarRecordatoriosCierreDiario();
   res.json({ message: 'Recordatorios diarios enviados con éxito', ...summary });
+};
+
+export const getCategorias = async (_req: AuthRequest, res: Response): Promise<void> => {
+  const categories = await ticketService.getCategorias();
+  res.json(categories);
 };

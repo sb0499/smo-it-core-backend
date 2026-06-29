@@ -1,9 +1,13 @@
 import mysql from 'mysql2/promise';
 import { config } from '../core/config';
 
-// Create a connection pool using the connection URI
+// Create a connection pool using individual configurations
 export const pool = mysql.createPool({
-  uri: config.DATABASE_URL,
+  host: config.DB_HOST,
+  user: config.DB_USER,
+  password: config.DB_PASSWORD,
+  database: config.DB_NAME,
+  port: config.DB_PORT,
   waitForConnections: true,
   connectionLimit: 10,
   maxIdle: 10,

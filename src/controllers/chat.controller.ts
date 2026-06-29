@@ -95,11 +95,33 @@ export const addMensaje = async (req: AuthRequest, res: Response): Promise<void>
   try {
     const canalId = parseInt(req.params.canal_id);
     const { mensaje } = req.body;
-    if (isNaN(canalId) || !mensaje) {
+    const file = req.file;
+
+    if (isNaN(canalId) || (!mensaje && !file)) {
       res.status(400).json({ detail: 'Parámetros inválidos o mensaje vacío.' });
       return;
     }
-    const msg = await chatService.addMensaje(canalId, req.currentUser.id, req.currentUser.rol_nombre, mensaje);
+
+    let archivoNombre: string | undefined;
+    let archivoRuta: string | undefined;
+    let archivoMimetype: string | undefined;
+
+    if (file) {
+      archivoNombre = file.originalname;
+      archivoRuta = `/uploads/${file.filename}`;
+      archivoMimetype = file.mimetype;
+    }
+
+    const msg = await chatService.addMensaje(
+      canalId, 
+      req.currentUser.id, 
+      req.currentUser.rol_nombre, 
+      mensaje || '',
+      archivoNombre, 
+      archivoRuta, 
+      archivoMimetype
+    );
+
     if (!msg) {
       res.status(404).json({ detail: 'Canal no encontrado.' });
       return;
@@ -110,6 +132,25 @@ export const addMensaje = async (req: AuthRequest, res: Response): Promise<void>
       res.status(403).json({ detail: error.message.replace('403:', '').trim() });
       return;
     }
+    res.status(500).json({ detail: error.message });
+  }
+};
+
+export const getOrCreateDMChannel = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { usuario_id } = req.body;
+    if (!usuario_id) {
+      res.status(400).json({ detail: 'El usuario_id es obligatorio para iniciar chat directo.' });
+      return;
+    }
+    const targetUserId = parseInt(usuario_id);
+    if (isNaN(targetUserId)) {
+      res.status(400).json({ detail: 'usuario_id inválido.' });
+      return;
+    }
+    const canal = await chatService.getOrCreateDMChannel(req.currentUser.id, targetUserId);
+    res.json(canal);
+  } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }
 };

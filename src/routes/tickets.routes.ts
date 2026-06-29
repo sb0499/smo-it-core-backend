@@ -151,3 +151,16 @@ ticketsRouter.get('/reporte/semanal', requireAuth, ctrl.descargarReporteSemanal)
  *         description: Recordatorios enviados exitosamente
  */
 ticketsRouter.post('/alertas/cierre-diario', requireAuth, ctrl.ejecutarRecordatorioCierre);
+
+/**
+ * @openapi
+ * /api/v1/tickets/categorias:
+ *   get:
+ *     tags: [Tickets]
+ *     summary: Obtener todas las categorías de soporte activas de la BD
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: Lista de categorías
+ */
+ticketsRouter.get('/categorias', requireAuth, ctrl.getCategorias);

@@ -1,6 +1,6 @@
 import { pool } from '../db/connection';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
-import { enviarCorreo } from './notificacion.service';
+import { enviarCorreo, crearNotificacion } from './notificacion.service';
 
 // --- HELPERS DE SEMAFORO Y TIEMPO ---
 export const calcularSemaforo = (fechaFinStr: string | Date, estado: string) => {
@@ -100,14 +100,14 @@ export const recalcularAvanceYEstados = async (proyectoId: number, usuarioId: nu
       // Si pasa a Finalizado y antes no lo estaba, disparar el correo de confirmación de fin
       if (nuevoEstadoProj === 'Finalizado' && projAnterior.estado !== 'Finalizado') {
         const [creadorRow] = await pool.query<RowDataPacket[]>(
-          `SELECT email, nombre_completo FROM usuario WHERE id = ?`,
+          `SELECT id, email, nombre_completo FROM usuario WHERE id = ?`,
           [projAnterior.creador_id]
         );
         const creador = creadorRow[0];
 
         // Obtener correos de los técnicos involucrados
         const [techRows] = await pool.query<RowDataPacket[]>(
-          `SELECT DISTINCT u.email, u.nombre_completo 
+          `SELECT DISTINCT u.id, u.email, u.nombre_completo 
            FROM tarea_proyecto t
            JOIN usuario u ON t.responsable_id = u.id
            WHERE t.proyecto_id = ?`,
@@ -123,26 +123,54 @@ export const recalcularAvanceYEstados = async (proyectoId: number, usuarioId: nu
             `Hola,\n\nNos complace informarte que el proyecto "${projAnterior.nombre}" ha sido finalizado con éxito (100% de avance en todas sus tareas y subtareas).\n\nCreador del Proyecto: ${creador?.nombre_completo || 'Sistema'}\nFecha de Finalización: ${new Date().toLocaleString()}\n\nSaludos,\nSistema SMO IT CORE`
           ).catch(console.error);
         }
+
+        // Notify creator and assigned technicians internally
+        const userIdsToNotify = [creador?.id, ...techRows.map((t) => t.id)].filter(Boolean) as number[];
+        for (const uId of userIdsToNotify) {
+          await crearNotificacion(
+            uId,
+            `Proyecto Finalizado: ${projAnterior.nombre}`,
+            `El proyecto "${projAnterior.nombre}" ha sido finalizado con éxito (100% de avance).`
+          ).catch(console.error);
+        }
       }
     }
   }
 };
 
 // --- SERVICIOS DE PROYECTO ---
-export const getProyectos = async () => {
-  const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT p.*, u.nombre_completo as creador_nombre, t.titulo as ticket_titulo
-     FROM proyecto p
-     JOIN usuario u ON p.creador_id = u.id
-     LEFT JOIN ticket t ON p.ticket_origen_id = t.id
-     ORDER BY p.created_at DESC`
-  );
+export const getProyectos = async (currentUser: any) => {
+  let query = `
+    SELECT DISTINCT p.*, u.nombre_completo as creador_nombre, t.titulo as ticket_titulo
+    FROM proyecto p
+    JOIN usuario u ON p.creador_id = u.id
+    LEFT JOIN ticket t ON p.ticket_origen_id = t.id
+  `;
+  const params: any[] = [];
+
+  if (currentUser.rol_nombre === 'TECNICO') {
+    query += `
+      LEFT JOIN tarea_proyecto tp ON tp.proyecto_id = p.id
+      LEFT JOIN subtarea_proyecto sp ON sp.tarea_id = tp.id
+      WHERE p.creador_id = ? OR tp.responsable_id = ? OR sp.responsable_id = ?
+    `;
+    params.push(currentUser.id, currentUser.id, currentUser.id);
+  } else if (currentUser.rol_nombre === 'USUARIO') {
+    query += `
+      WHERE p.creador_id = ? OR t.creador_id = ?
+    `;
+    params.push(currentUser.id, currentUser.id);
+  }
+
+  query += ` ORDER BY p.created_at DESC`;
+
+  const [rows] = await pool.query<RowDataPacket[]>(query, params);
   return rows;
 };
 
-export const getProyectoById = async (id: number) => {
+export const getProyectoById = async (id: number, currentUser: any) => {
   const [projRow] = await pool.query<RowDataPacket[]>(
-    `SELECT p.*, u.nombre_completo as creador_nombre, t.titulo as ticket_titulo
+    `SELECT p.*, u.nombre_completo as creador_nombre, t.titulo as ticket_titulo, t.creador_id as ticket_creador_id
      FROM proyecto p
      JOIN usuario u ON p.creador_id = u.id
      LEFT JOIN ticket t ON p.ticket_origen_id = t.id
@@ -151,6 +179,27 @@ export const getProyectoById = async (id: number) => {
   );
   if (projRow.length === 0) return null;
   const proyecto = projRow[0];
+
+  // Auth Check
+  if (currentUser.rol_nombre === 'TECNICO') {
+    const [tasks] = await pool.query<RowDataPacket[]>(
+      `SELECT id FROM tarea_proyecto WHERE proyecto_id = ? AND responsable_id = ?`,
+      [id, currentUser.id]
+    );
+    const [subtasks] = await pool.query<RowDataPacket[]>(
+      `SELECT sp.id FROM subtarea_proyecto sp 
+       JOIN tarea_proyecto tp ON sp.tarea_id = tp.id 
+       WHERE tp.proyecto_id = ? AND sp.responsable_id = ?`,
+      [id, currentUser.id]
+    );
+    if (proyecto.creador_id !== currentUser.id && tasks.length === 0 && subtasks.length === 0) {
+      throw new Error('403: No tienes permisos para ver este proyecto.');
+    }
+  } else if (currentUser.rol_nombre === 'USUARIO') {
+    if (proyecto.creador_id !== currentUser.id && proyecto.ticket_creador_id !== currentUser.id) {
+      throw new Error('403: No tienes permisos para ver este proyecto.');
+    }
+  }
 
   // Obtener tareas complejas con subtareas
   const [tareas] = await pool.query<RowDataPacket[]>(
@@ -240,7 +289,7 @@ export const createProyecto = async (data: { nombre: string; descripcion?: strin
     `El usuario ${currentUser.nombre_completo} creó el proyecto "${data.nombre}" en estado "Sin Iniciar"`
   );
 
-  return getProyectoById(proyectoId);
+  return getProyectoById(proyectoId, currentUser);
 };
 
 export const updateProyecto = async (id: number, data: { nombre?: string; descripcion?: string; fecha_fin_estimada?: string; estado?: string; tipo_proyecto?: string }, currentUser: any) => {
@@ -274,7 +323,7 @@ export const updateProyecto = async (id: number, data: { nombre?: string; descri
   await logProyectoHistorial(id, currentUser.id, msg);
   await recalcularAvanceYEstados(id, currentUser.id);
 
-  return getProyectoById(id);
+  return getProyectoById(id, currentUser);
 };
 
 export const deleteProyecto = async (id: number, currentUser: any) => {
@@ -655,7 +704,7 @@ export const addComentario = async (data: { autor_id: number; proyecto_id?: numb
       const limpio = match.substring(1); // Quitar el @
       // Buscar si coincide con email o nombre_completo
       const [userRows] = await pool.query<RowDataPacket[]>(
-        `SELECT email, nombre_completo FROM usuario WHERE email = ? OR nombre_completo LIKE ?`,
+        `SELECT id, email, nombre_completo FROM usuario WHERE email = ? OR nombre_completo LIKE ?`,
         [limpio, `%${limpio}%`]
       );
 
@@ -664,6 +713,13 @@ export const addComentario = async (data: { autor_id: number; proyecto_id?: numb
           u.email,
           `Mención en IT CORE: @${u.nombre_completo}`,
           `Hola ${u.nombre_completo},\n\nEl usuario "${autorNombre}" te ha mencionado en un comentario:\n\n"${data.contenido}"\n\nSaludos,\nSistema SMO IT CORE`
+        ).catch(console.error);
+
+        // Internal Notification
+        await crearNotificacion(
+          u.id,
+          `Mención de ${autorNombre}`,
+          `Te mencionó en un comentario de proyecto: "${data.contenido}"`
         ).catch(console.error);
       }
     }
@@ -797,13 +853,20 @@ export const enviarReporteSemanalTecnicos = async () => {
     `;
 
     await enviarCorreo(tech.email, `Reporte Semanal de Pendientes: ${tech.nombre_completo}`, html).catch(console.error);
+    
+    // Internal Notification
+    await crearNotificacion(
+      tech.id,
+      `Reporte Semanal de Pendientes`,
+      `Tienes ${tareasPendientes.length} tareas/subtareas activas en Proyectos TI esta semana.`
+    ).catch(console.error);
   }
   return true;
 };
 
 export const enviarReporteSemanalAdmin = async () => {
   const [admins] = await pool.query<RowDataPacket[]>(
-    `SELECT u.email 
+    `SELECT u.id, u.email 
      FROM usuario u 
      JOIN rol r ON u.rol_id = r.id 
      WHERE r.nombre = 'ADMIN' AND u.is_active = TRUE`
@@ -860,6 +923,13 @@ export const enviarReporteSemanalAdmin = async () => {
 
   for (const adm of admins) {
     await enviarCorreo(adm.email, `Reporte General de Avance de Técnicos`, html).catch(console.error);
+
+    // Internal Notification
+    await crearNotificacion(
+      adm.id,
+      `Reporte de Avances Semanales`,
+      `El reporte semanal consolidado de avances del personal técnico ha sido enviado a tu correo.`
+    ).catch(console.error);
   }
 
   return true;

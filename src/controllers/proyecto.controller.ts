@@ -7,7 +7,7 @@ import fs from 'fs';
 // --- CONTROLLERS DE PROYECTO ---
 export const getProyectos = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const proyectos = await proyectoService.getProyectos();
+    const proyectos = await proyectoService.getProyectos(req.currentUser);
     res.json(proyectos);
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
@@ -21,7 +21,7 @@ export const getProyectoById = async (req: AuthRequest, res: Response): Promise<
       res.status(400).json({ detail: 'ID de proyecto inválido.' });
       return;
     }
-    const proyecto = await proyectoService.getProyectoById(id);
+    const proyecto = await proyectoService.getProyectoById(id, req.currentUser);
     if (!proyecto) {
       res.status(404).json({ detail: 'Proyecto no encontrado.' });
       return;

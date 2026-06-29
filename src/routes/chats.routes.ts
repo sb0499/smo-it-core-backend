@@ -1,6 +1,26 @@
 import { Router } from 'express';
 import { requireAuth, requireAdminOrTecnico } from '../middlewares/auth.middleware';
 import * as ctrl from '../controllers/chat.controller';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+
+const UPLOAD_DIR = path.join(process.cwd(), 'uploads');
+if (!fs.existsSync(UPLOAD_DIR)) {
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, UPLOAD_DIR);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'file-' + uniqueSuffix + ext);
+  }
+});
+const upload = multer({ storage });
 
 const chatsRouter = Router();
 
@@ -160,6 +180,28 @@ chatsRouter.get('/canales/:canal_id/mensajes', requireAuth, ctrl.getCanalMensaje
  *       403:
  *         description: No tienes acceso a este canal privado
  */
-chatsRouter.post('/canales/:canal_id/mensajes', requireAuth, ctrl.addMensaje);
+chatsRouter.post('/canales/:canal_id/mensajes', requireAuth, upload.single('archivo'), ctrl.addMensaje);
+
+/**
+ * @openapi
+ * /api/v1/chats/dm:
+ *   post:
+ *     tags: [Chats]
+ *     summary: Iniciar o recuperar un canal de chat directo (DM) uno a uno con otro usuario
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [usuario_id]
+ *             properties:
+ *               usuario_id: { type: integer, example: 10 }
+ *     responses:
+ *       200:
+ *         description: Canal de chat directo devuelto exitosamente
+ */
+chatsRouter.post('/dm', requireAuth, ctrl.getOrCreateDMChannel);
 
 export default chatsRouter;

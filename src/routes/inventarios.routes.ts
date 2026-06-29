@@ -22,7 +22,7 @@ export const inventariosRouter = Router();
  *       200:
  *         description: Lista de activos
  */
-inventariosRouter.get('/', requireAuth, ctrl.getActivos);
+inventariosRouter.get('/', requireAuth, requireAdminOrTecnico, ctrl.getActivos);
 
 /**
  * @openapi

@@ -1,13 +1,18 @@
 import { pool } from '../db/connection';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
-import { enviarCorreo } from './notificacion.service';
+import { enviarCorreo, crearNotificacion } from './notificacion.service';
+import { config } from '../core/config';
 import ExcelJS from 'exceljs';
 
 export const getTickets = async (currentUser: any, skip = 0, limit = 100) => {
   let query = `
     SELECT t.*,
+           u.nombre_completo as tecnico_nombre,
+           e.nombre as empresa_nombre,
            JSON_UNQUOTE(t.bitacora_dinamica) as bitacora_dinamica
     FROM ticket t
+    LEFT JOIN usuario u ON t.tecnico_id = u.id
+    LEFT JOIN empresa e ON t.empresa_id = e.id
   `;
   const params: any[] = [];
 
@@ -137,20 +142,34 @@ export const createTicket = async (data: any, currentUser: any) => {
   );
 
   // Background notifications
+  let labelAsignado = 'Sin asignar';
+  let emailAsignado = '';
+
   if (tecnicoAsignado) {
-    pool.query<RowDataPacket[]>(
+    const [techResult] = await pool.query<RowDataPacket[]>(
       `SELECT email, nombre_completo FROM usuario WHERE id = ?`, [tecnicoAsignado]
-    ).then(([techRows]) => {
-      if (techRows.length > 0) {
-        const techEmail = techRows[0].email;
-        const techName = techRows[0].nombre_completo;
-        enviarCorreo(
-          techEmail,
-          `Nuevo Ticket Asignado: ${data.titulo}`,
-          `Hola ${techName},\n\nSe te ha asignado un nuevo ticket de soporte:\n\nTítulo: ${data.titulo}\nDescripción: ${data.descripcion}\nCategoría: ${data.categoria}\nPrioridad: ${data.prioridad || 'Media'}\n\nPor favor, ingresa a la plataforma para gestionarlo.`
-        ).catch(console.error);
-      }
-    }).catch(console.error);
+    );
+    if (techResult.length > 0) {
+      emailAsignado = techResult[0].email;
+      labelAsignado = (tecnicoAsignado === currentUser.id) 
+        ? 'él mismo' 
+        : techResult[0].nombre_completo;
+    }
+  }
+
+  if (tecnicoAsignado && emailAsignado) {
+    enviarCorreo(
+      emailAsignado,
+      `Nuevo Ticket Asignado: ${data.titulo}`,
+      `Hola ${labelAsignado === 'él mismo' ? currentUser.nombre_completo : labelAsignado},\n\nSe te ha asignado un nuevo ticket de soporte:\n\nTítulo: ${data.titulo}\nDescripción: ${data.descripcion}\nCategoría: ${data.categoria}\nPrioridad: ${data.prioridad || 'Media'}\n\nPor favor, ingresa a la plataforma para gestionarlo.`
+    ).catch(console.error);
+
+    // Internal Notification
+    crearNotificacion(
+      tecnicoAsignado,
+      `Nuevo Ticket Asignado`,
+      `Se te ha asignado el ticket: "${data.titulo}" (Categoría: ${data.categoria}, Prioridad: ${data.prioridad || 'Media'}).`
+    ).catch(console.error);
   }
 
   if (currentUser.rol_nombre === 'USUARIO') {
@@ -161,22 +180,52 @@ export const createTicket = async (data: any, currentUser: any) => {
       `Hola ${currentUser.nombre_completo},\n\nHemos registrado con éxito tu solicitud de soporte en el sistema:\n\nTítulo: ${data.titulo}\nDescripción: ${data.descripcion}\nCategoría: ${data.categoria}\nEstado: Nuevo\n\nUn técnico del equipo de IT revisará tu caso pronto.`
     ).catch(console.error);
 
-    // Alerta a soporte central
-    enviarCorreo(
-      'soporte@smo.com',
-      `[Alerta] Nuevo Ticket de Usuario: ${data.titulo}`,
-      `El usuario ${currentUser.nombre_completo} (${currentUser.email}) ha reportado un nuevo ticket:\n\nTítulo: ${data.titulo}\nDescripción: ${data.descripcion}\nCategoría: ${data.categoria}\nAsignado automáticamente al Técnico ID: ${tecnicoAsignado || 'Sin asignar'}.`
+    crearNotificacion(
+      currentUser.id,
+      `Ticket registrado con éxito`,
+      `Tu solicitud de soporte "${data.titulo}" fue registrada y está en cola.`
     ).catch(console.error);
+
+    // Notify all admin users internally
+    pool.query<RowDataPacket[]>(
+      `SELECT u.id FROM usuario u JOIN rol r ON u.rol_id = r.id WHERE r.nombre = 'ADMIN'`
+    ).then(([adminRows]) => {
+      adminRows.forEach(adm => {
+        crearNotificacion(
+          adm.id,
+          `Nuevo ticket de usuario: ${data.titulo}`,
+          `El usuario ${currentUser.nombre_completo} reportó un ticket. Asignado a: ${labelAsignado}.`
+        ).catch(console.error);
+      });
+    }).catch(console.error);
   } else {
-    // Alerta estándar de soporte
-    enviarCorreo(
-      'soporte@smo.com',
-      `Nuevo Ticket Registrado: ${data.titulo}`,
-      `Se ha creado un nuevo ticket por ${currentUser.nombre_completo}.\nTítulo: ${data.titulo}\nAsignado al Técnico ID: ${tecnicoAsignado || 'Sin asignar'}.`
-    ).catch(console.error);
+    // Notify all admin users internally
+    pool.query<RowDataPacket[]>(
+      `SELECT u.id FROM usuario u JOIN rol r ON u.rol_id = r.id WHERE r.nombre = 'ADMIN'`
+    ).then(([adminRows]) => {
+      adminRows.forEach(adm => {
+        if (adm.id !== currentUser.id) { // Avoid notifying self
+          crearNotificacion(
+            adm.id,
+            `Nuevo Ticket: ${data.titulo}`,
+            `Creado por ${currentUser.nombre_completo}. Asignado a: ${labelAsignado}.`
+          ).catch(console.error);
+        }
+      });
+    }).catch(console.error);
   }
 
-  const [rows] = await pool.query<RowDataPacket[]>(`SELECT * FROM ticket WHERE id = ?`, [result.insertId]);
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT t.*, 
+            u.nombre_completo as tecnico_nombre, 
+            e.nombre as empresa_nombre, 
+            JSON_UNQUOTE(t.bitacora_dinamica) as bitacora_dinamica
+     FROM ticket t 
+     LEFT JOIN usuario u ON t.tecnico_id = u.id 
+     LEFT JOIN empresa e ON t.empresa_id = e.id
+     WHERE t.id = ?`,
+    [result.insertId]
+  );
   const ticket = rows[0];
   return {
     ...ticket,
@@ -186,9 +235,48 @@ export const createTicket = async (data: any, currentUser: any) => {
   };
 };
 
-export const updateTicket = async (ticketId: number, data: any) => {
+export const updateTicket = async (ticketId: number, data: any, currentUser?: any) => {
   const [existing] = await pool.query<RowDataPacket[]>(`SELECT * FROM ticket WHERE id = ?`, [ticketId]);
   if (existing.length === 0) return null;
+  const tOld = existing[0];
+
+  let bitacora = [];
+  try {
+    bitacora = typeof tOld.bitacora_dinamica === 'string'
+      ? JSON.parse(tOld.bitacora_dinamica)
+      : tOld.bitacora_dinamica || [];
+  } catch (e) {
+    bitacora = [];
+  }
+
+  if (currentUser) {
+    let logs: string[] = [];
+    if (data.estado !== undefined && data.estado !== tOld.estado) {
+      logs.push(`Estado cambiado de "${tOld.estado}" a "${data.estado}"`);
+    }
+    if (data.avance_proceso !== undefined && Number(data.avance_proceso) !== Number(tOld.avance_proceso)) {
+      logs.push(`Avance actualizado de ${tOld.avance_proceso}% a ${data.avance_proceso}%`);
+    }
+    if (data.tecnico_id !== undefined && data.tecnico_id !== tOld.tecnico_id) {
+      if (data.tecnico_id) {
+        const [techRow] = await pool.query<RowDataPacket[]>(`SELECT nombre_completo FROM usuario WHERE id = ?`, [data.tecnico_id]);
+        const techName = techRow[0]?.nombre_completo || 'Desconocido';
+        logs.push(`Técnico asignado cambiado a: ${techName}`);
+      } else {
+        logs.push(`Se removió el técnico asignado`);
+      }
+    }
+
+    if (logs.length > 0) {
+      const actionStr = logs.join(', ');
+      bitacora.push({
+        accion: actionStr,
+        fecha: new Date().toISOString(),
+        usuario: currentUser.nombre_completo
+      });
+      data.bitacora_dinamica = bitacora;
+    }
+  }
 
   const sets: string[] = [];
   const vals: any[] = [];
@@ -202,7 +290,13 @@ export const updateTicket = async (ticketId: number, data: any) => {
     sets.push('bitacora_dinamica = ?');
     vals.push(JSON.stringify(data.bitacora_dinamica));
   }
-  if (sets.length === 0) return existing[0];
+  if (sets.length === 0) return {
+    ...tOld,
+    bitacora_dinamica: typeof tOld.bitacora_dinamica === 'string'
+      ? JSON.parse(tOld.bitacora_dinamica)
+      : tOld.bitacora_dinamica || []
+  };
+
   vals.push(ticketId);
   await pool.query(`UPDATE ticket SET ${sets.join(', ')}, updated_at = NOW() WHERE id = ?`, vals);
 
@@ -265,7 +359,7 @@ export const crearDesdePlantilla = async (plantillaId: number, currentUser: any)
 
 export const enviarRecordatoriosCierreDiario = async () => {
   const [tickets] = await pool.query<RowDataPacket[]>(
-    `SELECT t.id, t.titulo, t.estado, u.email as tecnico_email, u.nombre_completo as tecnico_nombre
+    `SELECT t.id, t.titulo, t.estado, t.tecnico_id, u.email as tecnico_email, u.nombre_completo as tecnico_nombre
      FROM ticket t
      JOIN usuario u ON t.tecnico_id = u.id
      WHERE t.estado IN ('Nuevo', 'En Proceso', 'Pendiente', 'Pruebas') AND u.is_active = 1`
@@ -276,10 +370,10 @@ export const enviarRecordatoriosCierreDiario = async () => {
   }
 
   // Group tickets by technician email
-  const techMap = new Map<string, { nombre: string; email: string; tickets: any[] }>();
+  const techMap = new Map<string, { id: number; nombre: string; email: string; tickets: any[] }>();
   for (const t of tickets) {
     if (!techMap.has(t.tecnico_email)) {
-      techMap.set(t.tecnico_email, { nombre: t.tecnico_nombre, email: t.tecnico_email, tickets: [] });
+      techMap.set(t.tecnico_email, { id: t.tecnico_id, nombre: t.tecnico_nombre, email: t.tecnico_email, tickets: [] });
     }
     techMap.get(t.tecnico_email)!.tickets.push(t);
   }
@@ -290,6 +384,14 @@ export const enviarRecordatoriosCierreDiario = async () => {
     const body = `Hola ${tech.nombre},\n\nEste es un recordatorio automático para el cierre diario de tus actividades.\n\nTienes los siguientes tickets pendientes que deben ser finalizados o actualizados antes de concluir el día:\n\n${listado}\n\nPor favor, ingresa a la plataforma y cambia el estado a 'Finalizada' si la novedad ya fue resuelta.`;
 
     await enviarCorreo(tech.email, `Alerta de Cierre Diario: Tickets Pendientes`, body).catch(console.error);
+
+    // Internal notification
+    await crearNotificacion(
+      tech.id,
+      `Cierre Diario: Tickets Pendientes`,
+      `Tienes ${tech.tickets.length} tickets de soporte asignados aún pendientes de resolver hoy.`
+    ).catch(console.error);
+
     totalTecnicosAlertados++;
   }
 
@@ -461,4 +563,18 @@ export const generarReporteSemanalExcel = async (rolUsuario: string, usuarioId: 
 
   const buffer = await workbook.xlsx.writeBuffer() as unknown as Buffer;
   return buffer;
+};
+
+export interface CategoriaTicket {
+  id: number;
+  nombre: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export const getCategorias = async (): Promise<CategoriaTicket[]> => {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    'SELECT * FROM categoria_ticket WHERE is_active = 1 ORDER BY nombre ASC'
+  );
+  return rows as CategoriaTicket[];
 };
