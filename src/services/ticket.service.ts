@@ -254,9 +254,6 @@ export const updateTicket = async (ticketId: number, data: any, currentUser?: an
     if (data.estado !== undefined && data.estado !== tOld.estado) {
       logs.push(`Estado cambiado de "${tOld.estado}" a "${data.estado}"`);
     }
-    if (data.avance_proceso !== undefined && Number(data.avance_proceso) !== Number(tOld.avance_proceso)) {
-      logs.push(`Avance actualizado de ${tOld.avance_proceso}% a ${data.avance_proceso}%`);
-    }
     if (data.tecnico_id !== undefined && data.tecnico_id !== tOld.tecnico_id) {
       if (data.tecnico_id) {
         const [techRow] = await pool.query<RowDataPacket[]>(`SELECT nombre_completo FROM usuario WHERE id = ?`, [data.tecnico_id]);
@@ -299,6 +296,29 @@ export const updateTicket = async (ticketId: number, data: any, currentUser?: an
 
   vals.push(ticketId);
   await pool.query(`UPDATE ticket SET ${sets.join(', ')}, updated_at = NOW() WHERE id = ?`, vals);
+
+  // Si el ticket se finaliza, enviar notificación al creador del ticket (solicitante)
+  if (data.estado === 'Finalizada' && tOld.estado !== 'Finalizada') {
+    const [creatorRows] = await pool.query<RowDataPacket[]>(
+      `SELECT email, nombre_completo FROM usuario WHERE id = ?`, [tOld.creador_id]
+    );
+    if (creatorRows.length > 0) {
+      const creatorUser = creatorRows[0];
+      // Notificación en la campana
+      crearNotificacion(
+        tOld.creador_id,
+        `Ticket Finalizado: ${tOld.titulo}`,
+        `Tu solicitud de soporte "${tOld.titulo}" ha sido resuelta. Observaciones: ${data.observaciones || 'Sin observaciones de cierre.'}`
+      ).catch(console.error);
+
+      // Notificación por correo
+      enviarCorreo(
+        creatorUser.email,
+        `Solucionado: ${tOld.titulo}`,
+        `Hola ${creatorUser.nombre_completo},\n\nTu solicitud de soporte "${tOld.titulo}" ha sido resuelta por nuestro equipo.\n\nDetalle/Observaciones:\n${data.observaciones || 'Sin observaciones de cierre.'}\n\nGracias por usar el sistema.`
+      ).catch(console.error);
+    }
+  }
 
   const [rows] = await pool.query<RowDataPacket[]>(`SELECT * FROM ticket WHERE id = ?`, [ticketId]);
   const t = rows[0];
