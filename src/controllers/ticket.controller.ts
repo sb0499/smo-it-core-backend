@@ -24,14 +24,25 @@ export const updateTicket = async (req: AuthRequest, res: Response): Promise<voi
   res.json(ticket);
 };
 
-export const crearDesdePlantilla = async (req: AuthRequest, res: Response): Promise<void> => {
-  const plantillaId = parseInt(req.params.plantilla_id);
-  const ticket = await ticketService.crearDesdePlantilla(plantillaId, req.currentUser);
-  if (!ticket) {
-    res.status(404).json({ detail: 'Plantilla recurrente no encontrada' });
+export const escalarTicketAN2 = async (req: AuthRequest, res: Response): Promise<void> => {
+  const ticketId = parseInt(req.params.ticket_id);
+  const { grupo_n2, tecnico_id } = req.body;
+  
+  if (!grupo_n2 || !['Infraestructura', 'Desarrollo'].includes(grupo_n2)) {
+    res.status(400).json({ detail: 'Grupo N2 inválido o no especificado. Debe ser "Infraestructura" o "Desarrollo".' });
     return;
   }
-  res.status(201).json(ticket);
+
+  try {
+    const ticket = await ticketService.escalarTicketAN2(ticketId, { grupo_n2, tecnico_id }, req.currentUser);
+    if (!ticket) {
+      res.status(404).json({ detail: 'Ticket no encontrado o no se pudo escalar' });
+      return;
+    }
+    res.json(ticket);
+  } catch (err: any) {
+    res.status(400).json({ detail: err.message || 'Error al escalar el ticket' });
+  }
 };
 
 export const descargarReporteSemanal = async (req: AuthRequest, res: Response): Promise<void> => {

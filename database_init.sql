@@ -1,5 +1,5 @@
-CREATE DATABASE IF NOT EXISTS vehiculos_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE vehiculos_db;
+CREATE DATABASE IF NOT EXISTS smo_it_core CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE smo_it_core;
 
 -- 1. rol
 CREATE TABLE IF NOT EXISTS rol (
@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS usuario (
   is_active BOOLEAN DEFAULT TRUE,
   rol_id INT NOT NULL,
   must_change_password BOOLEAN DEFAULT FALSE,
+  nivel_soporte ENUM('N1', 'N2') DEFAULT 'N1',
+  grupo_n2 ENUM('Infraestructura', 'Desarrollo') DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (rol_id) REFERENCES rol(id)
@@ -134,7 +136,11 @@ CREATE TABLE IF NOT EXISTS ticket (
   avance_proceso INT DEFAULT 0,
   observaciones TEXT,
   prioridad ENUM('Baja','Media','Alta','Critica') DEFAULT 'Media',
-  estado ENUM('Nuevo','Pendiente','Pruebas','Finalizada','En Proceso','Escalado a Proyecto') DEFAULT 'Nuevo',
+  estado ENUM('Nuevo','Pendiente','Pruebas','Finalizada','En Proceso','Escalado a Proyecto','Escalado a Proveedor') DEFAULT 'Nuevo',
+  nivel_soporte ENUM('N1','N2','N3') DEFAULT 'N1',
+  grupo_n2 ENUM('Infraestructura', 'Desarrollo') DEFAULT NULL,
+  sla_paused_at TIMESTAMP NULL DEFAULT NULL,
+  sla_acumulado_pausa_segundos INT DEFAULT 0,
   bitacora_dinamica JSON,
   creador_id INT NOT NULL,
   tecnico_id INT,
@@ -283,15 +289,23 @@ CREATE TABLE IF NOT EXISTS chat_mensaje (
   FOREIGN KEY (usuario_id) REFERENCES usuario(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
--- 23. plantilla_recurrente
-CREATE TABLE IF NOT EXISTS plantilla_recurrente (
+-- 23. soporte_recurrente
+CREATE TABLE IF NOT EXISTS soporte_recurrente (
   id INT AUTO_INCREMENT PRIMARY KEY,
   titulo VARCHAR(255) NOT NULL,
   descripcion TEXT NOT NULL,
   categoria VARCHAR(100) NOT NULL,
-  empresa VARCHAR(100),
+  empresa_id INT, -- Centro Comercial (CC)
   area_solicitante VARCHAR(100),
-  is_active BOOLEAN DEFAULT TRUE
+  persona_solicitante VARCHAR(150),
+  prioridad ENUM('Baja','Media','Alta','Critica') DEFAULT 'Media',
+  frecuencia ENUM('Diario','Semanal','Mensual','Trimestral','Semestral','Anual') NOT NULL,
+  fecha_inicio DATE NOT NULL,
+  siguiente_ejecucion DATE NOT NULL,
+  ultima_ejecucion DATE DEFAULT NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (empresa_id) REFERENCES empresa(id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
 
@@ -342,21 +356,21 @@ ON DUPLICATE KEY UPDATE nombre=nombre;
 -- Admin: admin@smo.com | admin123
 -- Técnicos: tech123 (santi@smo.com, fide@smo.com, gabo@smo.com, carlos@smo.com, etc.)
 -- Sede/Usuario: user123 (user@smo.com)
-INSERT INTO usuario (id, email, hashed_password, nombre_completo, is_active, rol_id, must_change_password) VALUES
-(1, 'admin@smo.com', '$2a$10$90/Ku5J22/UExoZxU2oATOw/zIB0rhlsywIItUa5myqzgjaT11eki', 'Administrador Sistema', 1, 1, 0),
-(2, 'santi@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Santi Condado', 1, 2, 1),
-(3, 'fide@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Fide Scala', 1, 2, 1),
-(4, 'gabo@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Gabo CCI', 1, 2, 1),
-(5, 'carlos@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Carlos Portoshopping', 1, 2, 1),
-(6, 'ana@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Ana Gametown', 1, 2, 1),
-(7, 'pedro@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Pedro Aparca', 1, 2, 1),
-(8, 'laura@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Laura Datatrust', 1, 2, 1),
-(9, 'diego@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Diego Teatro', 1, 2, 1),
-(10, 'juan@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Juan Pomasqui', 1, 2, 1),
-(11, 'maria@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Maria Portocarrero', 1, 2, 1),
-(12, 'andres@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Andres Lopez', 1, 2, 1),
-(13, 'sofia@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Sofia Martinez', 1, 2, 1),
-(14, 'user@smo.com', '$2a$10$7q6Q8c9a3d4Umr7ru778wOrVoC/AQ6dz/iCtMsGep2ZQH9n0VBmie', 'Cliente Condado', 1, 3, 0)
+INSERT INTO usuario (id, email, hashed_password, nombre_completo, is_active, rol_id, must_change_password, nivel_soporte, grupo_n2) VALUES
+(1, 'admin@smo.com', '$2a$10$90/Ku5J22/UExoZxU2oATOw/zIB0rhlsywIItUa5myqzgjaT11eki', 'Administrador Sistema', 1, 1, 0, 'N1', NULL),
+(2, 'santi@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Santi Condado', 1, 2, 1, 'N1', NULL),
+(3, 'fide@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Fide Scala', 1, 2, 1, 'N1', NULL),
+(4, 'gabo@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Gabo CCI', 1, 2, 1, 'N1', NULL),
+(5, 'carlos@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Carlos Portoshopping', 1, 2, 1, 'N1', NULL),
+(6, 'ana@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Ana Gametown', 1, 2, 1, 'N1', NULL),
+(7, 'pedro@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Pedro Aparca', 1, 2, 1, 'N1', NULL),
+(8, 'laura@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Laura Datatrust', 1, 2, 1, 'N2', 'Infraestructura'),
+(9, 'diego@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Diego Teatro', 1, 2, 1, 'N2', 'Desarrollo'),
+(10, 'juan@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Juan Pomasqui', 1, 2, 1, 'N1', NULL),
+(11, 'maria@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Maria Portocarrero', 1, 2, 1, 'N1', NULL),
+(12, 'andres@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Andres Lopez', 1, 2, 1, 'N1', NULL),
+(13, 'sofia@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Sofia Martinez', 1, 2, 1, 'N1', NULL),
+(14, 'user@smo.com', '$2a$10$7q6Q8c9a3d4Umr7ru778wOrVoC/AQ6dz/iCtMsGep2ZQH9n0VBmie', 'Cliente Condado', 1, 3, 0, 'N1', NULL)
 ON DUPLICATE KEY UPDATE hashed_password=values(hashed_password);
 
 -- Asignar empresas/sedes a los usuarios

@@ -102,23 +102,23 @@ ticketsRouter.put('/:ticket_id', requireAuth, ctrl.updateTicket);
 
 /**
  * @openapi
- * /api/v1/tickets/crear-desde-plantilla/{plantilla_id}:
+ * /api/v1/tickets/{ticket_id}/escalar-n2:
  *   post:
  *     tags: [Tickets]
- *     summary: Crear un ticket a partir de una plantilla recurrente (con asignación automática)
+ *     summary: Escalar un ticket a Nivel 2 (Asignación automática a N2)
  *     security: [{ bearerAuth: [] }]
  *     parameters:
  *       - in: path
- *         name: plantilla_id
+ *         name: ticket_id
  *         required: true
  *         schema: { type: integer }
  *     responses:
- *       201:
- *         description: Ticket creado con éxito a partir de la plantilla
+ *       200:
+ *         description: Ticket escalado a Nivel 2 exitosamente
  *       404:
- *         description: Plantilla no encontrada
+ *         description: Ticket no encontrado o no se pudo escalar
  */
-ticketsRouter.post('/crear-desde-plantilla/:plantilla_id', requireAuth, ctrl.crearDesdePlantilla);
+ticketsRouter.post('/:ticket_id/escalar-n2', requireAuth, ctrl.escalarTicketAN2);
 
 /**
  * @openapi

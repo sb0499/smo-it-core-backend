@@ -36,7 +36,6 @@ export const getTickets = async (currentUser: any, skip = 0, limit = 100) => {
       : r.bitacora_dinamica || []
   }));
 };
-
 export const createTicket = async (data: any, currentUser: any) => {
   let tecnicoAsignado: number | null = null;
   const ahora = new Date();
@@ -47,24 +46,24 @@ export const createTicket = async (data: any, currentUser: any) => {
   } else if (currentUser.rol_nombre === 'ADMIN' && data.tecnico_id) {
     tecnicoAsignado = data.tecnico_id;
   } else {
-    // Asignación automática
+    // Asignación automática (solamente a técnicos N1 asignados a ese CC)
     const esDiaSemana = diaSemana >= 1 && diaSemana <= 5;
     if (esDiaSemana) {
-      // 1. Intentar asignación dinámica por sede (pivot usuario_empresa)
+      // 1. Intentar asignación dinámica por Centro Comercial - CC (pivot usuario_empresa)
       if (data.empresa_id) {
         const [techRows] = await pool.query<RowDataPacket[]>(
           `SELECT u.id 
            FROM usuario u
            JOIN usuario_empresa ue ON u.id = ue.usuario_id
            JOIN rol r ON u.rol_id = r.id
-           WHERE ue.empresa_id = ? AND r.nombre = 'TECNICO' AND u.is_active = 1`,
+           WHERE ue.empresa_id = ? AND r.nombre = 'TECNICO' AND u.nivel_soporte = 'N1' AND u.is_active = 1`,
           [data.empresa_id]
         );
         if (techRows.length > 0) {
           if (techRows.length === 1) {
             tecnicoAsignado = techRows[0].id;
           } else {
-            // Balancear entre los técnicos de esa sede/empresa
+            // Balancear entre los técnicos N1 de esa sede/empresa
             const techIds = techRows.map(t => t.id);
             const [balanceoSede] = await pool.query<RowDataPacket[]>(
               `SELECT u.id, COUNT(t.id) as total_tickets
@@ -81,14 +80,14 @@ export const createTicket = async (data: any, currentUser: any) => {
         }
       }
 
-      // 2. Si no hay técnico para esa sede, balanceo global
+      // 2. Si no hay técnico N1 para esa sede, balanceo global de técnicos N1
       if (!tecnicoAsignado) {
         const [balanceo] = await pool.query<RowDataPacket[]>(
           `SELECT u.id, COUNT(t.id) as total_tickets
            FROM usuario u
            JOIN rol r ON u.rol_id = r.id
            LEFT JOIN ticket t ON u.id = t.tecnico_id AND t.estado IN ('Nuevo', 'Pendiente')
-           WHERE r.nombre = 'TECNICO' AND u.is_active = 1
+           WHERE r.nombre = 'TECNICO' AND u.nivel_soporte = 'N1' AND u.is_active = 1
            GROUP BY u.id
            ORDER BY total_tickets ASC
            LIMIT 1`
@@ -113,7 +112,7 @@ export const createTicket = async (data: any, currentUser: any) => {
            FROM usuario u
            JOIN rol r ON u.rol_id = r.id
            LEFT JOIN ticket t ON u.id = t.tecnico_id AND t.estado IN ('Nuevo', 'Pendiente')
-           WHERE r.nombre = 'TECNICO' AND u.is_active = 1
+           WHERE r.nombre = 'TECNICO' AND u.nivel_soporte = 'N1' AND u.is_active = 1
            GROUP BY u.id
            ORDER BY total_tickets ASC
            LIMIT 1`
@@ -129,15 +128,15 @@ export const createTicket = async (data: any, currentUser: any) => {
     `INSERT INTO ticket
       (titulo, descripcion, categoria, empresa_id, area_solicitante, persona_solicitante,
        medio_solicitud, fecha_final_tentativa, avance_proceso, observaciones, prioridad,
-       estado, bitacora_dinamica, creador_id, tecnico_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       estado, nivel_soporte, bitacora_dinamica, creador_id, tecnico_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.titulo, data.descripcion, data.categoria, data.empresa_id || null,
       data.area_solicitante || null, data.persona_solicitante || null,
       data.medio_solicitud || 'Plataforma', data.fecha_final_tentativa || null,
       data.avance_proceso ?? 0, data.observaciones || null,
       data.prioridad || 'Media', data.estado || 'Nuevo',
-      bitacora, currentUser.id, tecnicoAsignado
+      data.nivel_soporte || 'N1', bitacora, currentUser.id, tecnicoAsignado
     ]
   );
 
@@ -234,7 +233,6 @@ export const createTicket = async (data: any, currentUser: any) => {
       : ticket.bitacora_dinamica || []
   };
 };
-
 export const updateTicket = async (ticketId: number, data: any, currentUser?: any) => {
   const [existing] = await pool.query<RowDataPacket[]>(`SELECT * FROM ticket WHERE id = ?`, [ticketId]);
   if (existing.length === 0) return null;
@@ -253,6 +251,26 @@ export const updateTicket = async (ticketId: number, data: any, currentUser?: an
     let logs: string[] = [];
     if (data.estado !== undefined && data.estado !== tOld.estado) {
       logs.push(`Estado cambiado de "${tOld.estado}" a "${data.estado}"`);
+      
+      // SLA Pausing Logic (ITIL N3)
+      if (data.estado === 'Escalado a Proveedor') {
+        data.nivel_soporte = 'N3';
+        data.sla_paused_at = new Date();
+      } else if (tOld.estado === 'Escalado a Proveedor') {
+        data.sla_paused_at = null;
+        data.nivel_soporte = 'N2'; // Regresar a N2 por defecto para revisión
+        if (tOld.sla_paused_at) {
+          const pausedMs = Date.now() - new Date(tOld.sla_paused_at).getTime();
+          const pausedSec = Math.floor(pausedMs / 1000);
+          data.sla_acumulado_pausa_segundos = (tOld.sla_acumulado_pausa_segundos || 0) + pausedSec;
+          
+          if (tOld.fecha_final_tentativa) {
+            const currentTentative = new Date(tOld.fecha_final_tentativa);
+            const newTentative = new Date(currentTentative.getTime() + pausedMs);
+            data.fecha_final_tentativa = newTentative;
+          }
+        }
+      }
     }
     if (data.tecnico_id !== undefined && data.tecnico_id !== tOld.tecnico_id) {
       if (data.tecnico_id) {
@@ -279,7 +297,7 @@ export const updateTicket = async (ticketId: number, data: any, currentUser?: an
   const vals: any[] = [];
   const allowed = ['titulo', 'descripcion', 'categoria', 'empresa_id', 'area_solicitante', 'persona_solicitante',
     'medio_solicitud', 'fecha_final_tentativa', 'avance_proceso', 'observaciones', 'prioridad',
-    'estado', 'tecnico_id'];
+    'estado', 'tecnico_id', 'nivel_soporte', 'grupo_n2', 'sla_paused_at', 'sla_acumulado_pausa_segundos'];
   for (const field of allowed) {
     if (data[field] !== undefined) { sets.push(`${field} = ?`); vals.push(data[field]); }
   }
@@ -320,7 +338,12 @@ export const updateTicket = async (ticketId: number, data: any, currentUser?: an
     }
   }
 
-  const [rows] = await pool.query<RowDataPacket[]>(`SELECT * FROM ticket WHERE id = ?`, [ticketId]);
+  const [rows] = await pool.query<RowDataPacket[]>(`
+    SELECT t.*, u.nombre_completo as tecnico_nombre, e.nombre as empresa_nombre 
+    FROM ticket t 
+    LEFT JOIN usuario u ON t.tecnico_id = u.id 
+    LEFT JOIN empresa e ON t.empresa_id = e.id 
+    WHERE t.id = ?`, [ticketId]);
   const t = rows[0];
   return {
     ...t,
@@ -343,38 +366,134 @@ export const agregarBitacora = async (ticketId: number, currentUser: any, accion
   return { ...ticket, bitacora_dinamica: bitacora };
 };
 
-export const crearDesdePlantilla = async (plantillaId: number, currentUser: any) => {
-  const [plantillaRows] = await pool.query<RowDataPacket[]>(
-    `SELECT * FROM plantilla_recurrente WHERE id = ?`, [plantillaId]
-  );
-  if (plantillaRows.length === 0) return null;
-  const plantilla = plantillaRows[0];
+export const escalarTicketAN2 = async (
+  ticketId: number,
+  data: { grupo_n2: 'Infraestructura' | 'Desarrollo'; tecnico_id?: number | null },
+  currentUser: any
+) => {
+  const { grupo_n2, tecnico_id } = data;
 
-  // Try to match the template's enterprise (text string) to an actual enterprise ID
-  let empresaId: number | null = null;
-  if (plantilla.empresa) {
-    const [empRows] = await pool.query<RowDataPacket[]>(
-      `SELECT id FROM empresa WHERE nombre LIKE ?`, [`%${plantilla.empresa}%`]
-    );
-    if (empRows.length > 0) {
-      empresaId = empRows[0].id;
+  const [existing] = await pool.query<RowDataPacket[]>(
+    `SELECT * FROM ticket WHERE id = ?`, [ticketId]
+  );
+  if (existing.length === 0) return null;
+  const ticket = existing[0];
+
+  // Cargar técnicos activos N2 de ese grupo específico
+  const [techRows] = await pool.query<RowDataPacket[]>(
+    `SELECT u.id, u.nombre_completo, u.email 
+     FROM usuario u
+     JOIN rol r ON u.rol_id = r.id
+     WHERE r.nombre = 'TECNICO' AND u.nivel_soporte = 'N2' AND u.grupo_n2 = ? AND u.is_active = 1`,
+    [grupo_n2]
+  );
+
+  let finalTecnicoId: number | null = null;
+  let finalTecnicoNombre = 'Sin asignar';
+  let finalTecnicoEmail = '';
+
+  if (tecnico_id && Number(tecnico_id) > 0) {
+    const matched = techRows.find(t => t.id === Number(tecnico_id));
+    if (!matched) {
+      throw new Error(`El técnico seleccionado no pertenece al grupo N2 ${grupo_n2} o no está activo.`);
+    }
+    finalTecnicoId = matched.id;
+    finalTecnicoNombre = matched.nombre_completo;
+    finalTecnicoEmail = matched.email;
+  } else {
+    // Balancear carga dentro de este grupo
+    if (techRows.length > 0) {
+      if (techRows.length === 1) {
+        finalTecnicoId = techRows[0].id;
+        finalTecnicoNombre = techRows[0].nombre_completo;
+        finalTecnicoEmail = techRows[0].email;
+      } else {
+        const techIds = techRows.map(t => t.id);
+        const [balanceo] = await pool.query<RowDataPacket[]>(
+          `SELECT u.id, COUNT(t.id) as total_tickets
+           FROM usuario u
+           LEFT JOIN ticket t ON u.id = t.tecnico_id AND t.estado IN ('Nuevo', 'Pendiente', 'En Proceso')
+           WHERE u.id IN (?)
+           GROUP BY u.id
+           ORDER BY total_tickets ASC
+           LIMIT 1`,
+          [techIds]
+        );
+        if (balanceo.length > 0) {
+          finalTecnicoId = balanceo[0].id;
+          const matched = techRows.find(t => t.id === finalTecnicoId);
+          if (matched) {
+            finalTecnicoNombre = matched.nombre_completo;
+            finalTecnicoEmail = matched.email;
+          }
+        }
+      }
     }
   }
 
-  // Build the ticket payload from the template
-  const ticketData = {
-    titulo: plantilla.titulo,
-    descripcion: plantilla.descripcion,
-    categoria: plantilla.categoria,
-    empresa_id: empresaId,
-    area_solicitante: plantilla.area_solicitante,
-    persona_solicitante: 'Sistema Automático (Plantilla Recurrente)',
-    medio_solicitud: 'Automático (Recurrente)',
-    prioridad: 'Media',
-    estado: 'Nuevo'
-  };
+  // Cargar bitácora
+  let bitacora = [];
+  try {
+    bitacora = typeof ticket.bitacora_dinamica === 'string'
+      ? JSON.parse(ticket.bitacora_dinamica)
+      : ticket.bitacora_dinamica || [];
+  } catch (e) {
+    bitacora = [];
+  }
 
-  return await createTicket(ticketData, currentUser);
+  bitacora.push({
+    accion: `Ticket escalado a Nivel 2 (${grupo_n2}). Asignado a: ${finalTecnicoNombre}`,
+    fecha: new Date().toISOString(),
+    usuario: currentUser.nombre_completo
+  });
+
+  await pool.query(
+    `UPDATE ticket 
+     SET nivel_soporte = 'N2', 
+         grupo_n2 = ?,
+         tecnico_id = ?, 
+         bitacora_dinamica = ?, 
+         updated_at = NOW() 
+     WHERE id = ?`,
+    [grupo_n2, finalTecnicoId, JSON.stringify(bitacora), ticketId]
+  );
+
+  // Enviar correos y notificaciones internas si hay técnico asignado
+  if (finalTecnicoId && finalTecnicoEmail) {
+    enviarCorreo(
+      finalTecnicoEmail,
+      `Ticket Escalado a N2 (${grupo_n2}): ${ticket.titulo}`,
+      `Hola ${finalTecnicoNombre},\n\nSe te ha asignado por escalación a Nivel 2 (${grupo_n2}) el siguiente ticket:\n\nTítulo: ${ticket.titulo}\nDescripción: ${ticket.descripcion}\nPrioridad: ${ticket.prioridad}\n\nIngresa a la plataforma para gestionarlo.`
+    ).catch(console.error);
+
+    crearNotificacion(
+      finalTecnicoId,
+      `Ticket Escalado a N2 (${grupo_n2})`,
+      `Se te ha asignado el ticket: "${ticket.titulo}" por escalación a Nivel 2 (${grupo_n2}).`
+    ).catch(console.error);
+  } else {
+    // Si no hay técnico asignado, notificar a todos los N2 del grupo
+    for (const tech of techRows) {
+      crearNotificacion(
+        tech.id,
+        `Nuevo Ticket N2 (${grupo_n2}) en Cola`,
+        `Se ha escalado el ticket: "${ticket.titulo}" a Nivel 2 (${grupo_n2}) sin técnico asignado.`
+      ).catch(console.error);
+    }
+  }
+
+  const [updatedRows] = await pool.query<RowDataPacket[]>(
+    `SELECT t.*, u.nombre_completo as tecnico_nombre, e.nombre as empresa_nombre 
+     FROM ticket t 
+     LEFT JOIN usuario u ON t.tecnico_id = u.id 
+     LEFT JOIN empresa e ON t.empresa_id = e.id 
+     WHERE t.id = ?`,
+    [ticketId]
+  );
+  return {
+    ...updatedRows[0],
+    bitacora_dinamica: bitacora
+  };
 };
 
 export const enviarRecordatoriosCierreDiario = async () => {
