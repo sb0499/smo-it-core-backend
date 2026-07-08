@@ -18,6 +18,7 @@ import { empresasRouter } from './routes/empresas.routes';
 import { recurrenciaRouter } from './routes/recurrencia.routes';
 import reportesRouter from './routes/reportes.routes';
 import { notificacionesRouter } from './routes/notificaciones.routes';
+import { tipoEquiposRouter } from './routes/tipo-equipos.routes';
 import path from 'path';
 
 const app = express();
@@ -74,6 +75,7 @@ app.use(`${API}/soportes-recurrentes`, recurrenciaRouter);
 app.use(`${API}/proveedores`, proveedoresRouter);
 app.use(`${API}/empresas`, empresasRouter);
 app.use(`${API}/notificaciones`, notificacionesRouter);
+app.use(`${API}/tipo-equipos`, tipoEquiposRouter);
 
 // Root health check
 app.get('/', (_req, res) => {

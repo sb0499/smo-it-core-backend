@@ -10,6 +10,21 @@ export const getActivos = async (req: AuthRequest, res: Response): Promise<void>
   res.json(activos);
 };
 
+export const autogenerarCodigo = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const empresaId = parseInt(req.query.empresa_id as string);
+    const tipoEquipoId = parseInt(req.query.tipo_equipo_id as string);
+    if (isNaN(empresaId) || isNaN(tipoEquipoId)) {
+      res.status(400).json({ detail: 'empresa_id y tipo_equipo_id son requeridos.' });
+      return;
+    }
+    const codigo = await inventarioService.generateUniqueCode(empresaId, tipoEquipoId);
+    res.json({ codigo });
+  } catch (error: any) {
+    res.status(500).json({ detail: 'Error al autogenerar código', error: error.message });
+  }
+};
+
 export const createActivo = async (req: AuthRequest, res: Response): Promise<void> => {
   const activo = await inventarioService.createActivo(req.body);
   res.status(201).json(activo);

@@ -34,13 +34,13 @@ export const getProyectoById = async (req: AuthRequest, res: Response): Promise<
 
 export const createProyecto = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { nombre, descripcion, fecha_fin_estimada, tipo_proyecto, ticket_origen_id } = req.body;
+    const { nombre, descripcion, fecha_fin_estimada, tipo_proyecto, ticket_origen_id, miembros } = req.body;
     if (!nombre || !fecha_fin_estimada) {
       res.status(400).json({ detail: 'El nombre y la fecha estimada de fin son obligatorios.' });
       return;
     }
     const proyecto = await proyectoService.createProyecto(
-      { nombre, descripcion, fecha_fin_estimada, tipo_proyecto, ticket_origen_id },
+      { nombre, descripcion, fecha_fin_estimada, tipo_proyecto, ticket_origen_id, miembros },
       req.currentUser
     );
     res.status(201).json(proyecto);

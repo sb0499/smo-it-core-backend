@@ -5,28 +5,87 @@ import { createTicket } from './ticket.service';
 export const getActivos = async (skip = 0, limit = 100) => {
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT a.*, p.nombre as persona_nombre, p.cedula as persona_cedula,
-            prov.nombre as proveedor_nombre, prov.contacto as proveedor_contacto
+            prov.nombre as proveedor_nombre, prov.contacto as proveedor_contacto,
+            te.nombre as tipo_equipo_nombre, e.nombre as empresa_nombre
      FROM activo a
      LEFT JOIN persona p ON a.persona_id = p.id
      LEFT JOIN proveedor prov ON a.proveedor_id = prov.id
+     LEFT JOIN tipo_equipo te ON a.tipo_equipo_id = te.id
+     LEFT JOIN empresa e ON a.empresa_id = e.id
      LIMIT ? OFFSET ?`,
     [limit, skip]
   );
   return rows;
 };
 
+export const generateUniqueCode = async (empresaId: number, tipoEquipoId: number): Promise<string> => {
+  // 1. Fetch Sede name
+  const [empresaRows] = await pool.query<RowDataPacket[]>('SELECT nombre FROM empresa WHERE id = ?', [empresaId]);
+  if (empresaRows.length === 0) throw new Error('Sede no encontrada.');
+  const sedeName = empresaRows[0].nombre;
+
+  // 2. Fetch Tipo Equipo name
+  const [tipoRows] = await pool.query<RowDataPacket[]>('SELECT nombre FROM tipo_equipo WHERE id = ?', [tipoEquipoId]);
+  if (tipoRows.length === 0) throw new Error('Tipo de equipo no encontrado.');
+  const tipoName = tipoRows[0].nombre;
+
+  // 3. Generate prefixes (first 3 letters, uppercase)
+  const cleanSede = sedeName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase();
+  const cleanTipo = tipoName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase();
+  const prefix = `${cleanSede}-${cleanTipo}`;
+
+  // 4. Query existing assets with the same prefix to find the next sequential number
+  const [activoRows] = await pool.query<RowDataPacket[]>(
+    'SELECT codigo FROM activo WHERE codigo LIKE ?',
+    [`${prefix}-%`]
+  );
+
+  let maxSeq = 0;
+  for (const row of activoRows) {
+    const parts = row.codigo.split('-');
+    const seqStr = parts[parts.length - 1];
+    const seq = parseInt(seqStr, 10);
+    if (!isNaN(seq) && seq > maxSeq) {
+      maxSeq = seq;
+    }
+  }
+
+  const nextSeq = String(maxSeq + 1).padStart(3, '0');
+  return `${prefix}-${nextSeq}`;
+};
+
 export const createActivo = async (data: {
-  codigo: string; serial: string; marca: string; modelo: string;
+  codigo?: string; serial: string; marca: string; modelo: string;
   especificaciones?: string; persona_id?: number; proveedor_id?: number; fecha_compra?: string;
+  tipo_equipo_id?: number; empresa_id?: number;
 }) => {
+  let finalCodigo = data.codigo || '';
+  if (data.empresa_id && data.tipo_equipo_id && !finalCodigo) {
+    finalCodigo = await generateUniqueCode(data.empresa_id, data.tipo_equipo_id);
+  } else if (!finalCodigo) {
+    throw new Error('El código único o la combinación de Sede y Tipo de Equipo es requerida.');
+  }
+
   const estado = data.persona_id ? 'Asignado' : 'Stock';
   const [result] = await pool.query<ResultSetHeader>(
-    `INSERT INTO activo (codigo, serial, marca, modelo, especificaciones, estado, persona_id, proveedor_id, fecha_compra)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [data.codigo, data.serial, data.marca, data.modelo,
-     data.especificaciones || null, estado, data.persona_id || null, data.proveedor_id || null, data.fecha_compra || null]
+    `INSERT INTO activo (codigo, serial, marca, modelo, especificaciones, estado, persona_id, proveedor_id, fecha_compra, tipo_equipo_id, empresa_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [finalCodigo, data.serial, data.marca, data.modelo,
+     data.especificaciones || null, estado, data.persona_id || null, data.proveedor_id || null, data.fecha_compra || null, data.tipo_equipo_id || null, data.empresa_id || null]
   );
-  const [rows] = await pool.query<RowDataPacket[]>(`SELECT * FROM activo WHERE id = ?`, [result.insertId]);
+  
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT a.*, p.nombre as persona_nombre, p.cedula as persona_cedula,
+            prov.nombre as proveedor_nombre, prov.contacto as proveedor_contacto,
+            te.nombre as tipo_equipo_nombre, e.nombre as empresa_nombre
+     FROM activo a
+     LEFT JOIN persona p ON a.persona_id = p.id
+     LEFT JOIN proveedor prov ON a.proveedor_id = prov.id
+     LEFT JOIN tipo_equipo te ON a.tipo_equipo_id = te.id
+     LEFT JOIN empresa e ON a.empresa_id = e.id
+     WHERE a.id = ?`,
+    [result.insertId]
+  );
   return rows[0];
 };
 

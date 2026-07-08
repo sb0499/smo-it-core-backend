@@ -53,7 +53,12 @@ export const recalcularAvanceYEstados = async (proyectoId: number, usuarioId: nu
       const totalAvance = subtareas.reduce((acc, sub) => acc + sub.avance_porcentaje, 0);
       const promedio = Math.round(totalAvance / subtareas.length);
       const todasFinalizadas = subtareas.every((sub) => sub.estado === 'Finalizado');
-      const nuevoEstado = todasFinalizadas ? 'Finalizado' : tarea.estado;
+      let nuevoEstado = tarea.estado;
+      if (todasFinalizadas) {
+        nuevoEstado = 'Finalizado';
+      } else {
+        nuevoEstado = promedio === 0 ? 'Sin Iniciar' : 'En Proceso';
+      }
 
       if (tarea.avance_porcentaje !== promedio || tarea.estado !== nuevoEstado) {
         await pool.query(
@@ -84,7 +89,12 @@ export const recalcularAvanceYEstados = async (proyectoId: number, usuarioId: nu
     const [projRow] = await pool.query<RowDataPacket[]>(`SELECT * FROM proyecto WHERE id = ?`, [proyectoId]);
     const projAnterior = projRow[0];
 
-    const nuevoEstadoProj = todasTareasFinalizadas ? 'Finalizado' : projAnterior.estado;
+    let nuevoEstadoProj = projAnterior.estado;
+    if (todasTareasFinalizadas) {
+      nuevoEstadoProj = 'Finalizado';
+    } else {
+      nuevoEstadoProj = promedioProj === 0 ? 'Sin Iniciar' : 'En Proceso';
+    }
 
     if (projAnterior.avance_porcentaje !== promedioProj || projAnterior.estado !== nuevoEstadoProj) {
       await pool.query(
@@ -275,11 +285,11 @@ export const getProyectoById = async (id: number, currentUser: any) => {
   };
 };
 
-export const createProyecto = async (data: { nombre: string; descripcion?: string; fecha_fin_estimada: string; tipo_proyecto?: string; ticket_origen_id?: number }, currentUser: any) => {
+export const createProyecto = async (data: { nombre: string; descripcion?: string; fecha_fin_estimada: string; tipo_proyecto?: string; ticket_origen_id?: number; miembros?: string }, currentUser: any) => {
   const [result] = await pool.query<ResultSetHeader>(
-    `INSERT INTO proyecto (nombre, descripcion, fecha_fin_estimada, estado, tipo_proyecto, creador_id, ticket_origen_id)
-     VALUES (?, ?, ?, 'Sin Iniciar', ?, ?, ?)`,
-    [data.nombre, data.descripcion || null, data.fecha_fin_estimada, data.tipo_proyecto || 'Otro', currentUser.id, data.ticket_origen_id || null]
+    `INSERT INTO proyecto (nombre, descripcion, fecha_fin_estimada, estado, tipo_proyecto, creador_id, ticket_origen_id, miembros)
+     VALUES (?, ?, ?, 'Sin Iniciar', ?, ?, ?, ?)`,
+    [data.nombre, data.descripcion || null, data.fecha_fin_estimada, data.tipo_proyecto || 'Otro', currentUser.id, data.ticket_origen_id || null, data.miembros || null]
   );
 
   const proyectoId = result.insertId;
@@ -292,7 +302,7 @@ export const createProyecto = async (data: { nombre: string; descripcion?: strin
   return getProyectoById(proyectoId, currentUser);
 };
 
-export const updateProyecto = async (id: number, data: { nombre?: string; descripcion?: string; fecha_fin_estimada?: string; estado?: string; tipo_proyecto?: string }, currentUser: any) => {
+export const updateProyecto = async (id: number, data: { nombre?: string; descripcion?: string; fecha_fin_estimada?: string; estado?: string; tipo_proyecto?: string; miembros?: string }, currentUser: any) => {
   const [existing] = await pool.query<RowDataPacket[]>(`SELECT * FROM proyecto WHERE id = ?`, [id]);
   if (existing.length === 0) return null;
   const proj = existing[0];
@@ -310,10 +320,11 @@ export const updateProyecto = async (id: number, data: { nombre?: string; descri
   const fechaFin = data.fecha_fin_estimada !== undefined ? data.fecha_fin_estimada : proj.fecha_fin_estimada;
   const estado = data.estado !== undefined ? data.estado : proj.estado;
   const tipo = data.tipo_proyecto !== undefined ? data.tipo_proyecto : proj.tipo_proyecto;
+  const miembros = data.miembros !== undefined ? data.miembros : proj.miembros;
 
   await pool.query(
-    `UPDATE proyecto SET nombre = ?, descripcion = ?, fecha_fin_estimada = ?, estado = ?, tipo_proyecto = ? WHERE id = ?`,
-    [nombre, descripcion, fechaFin, estado, tipo, id]
+    `UPDATE proyecto SET nombre = ?, descripcion = ?, fecha_fin_estimada = ?, estado = ?, tipo_proyecto = ?, miembros = ? WHERE id = ?`,
+    [nombre, descripcion, fechaFin, estado, tipo, miembros, id]
   );
 
   let msg = `El usuario ${currentUser.nombre_completo} actualizó datos del proyecto:`;

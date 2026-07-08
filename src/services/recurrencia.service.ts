@@ -166,9 +166,8 @@ export const processRecurrentSupports = async () => {
   };
 
   for (const item of recurrents) {
-    console.log(`[Cron] Procesando soporte recurrente #${item.id}: "${item.titulo}"`);
+    console.log(`Procesando soporte recurrente #${item.id}: "${item.titulo}"`);
     
-    // Crear el ticket real en el nivel N1
     const ticketData = {
       titulo: `[RECURRENTE] ${item.titulo}`,
       descripcion: `Soporte Programado Recurrente: ${item.descripcion}`,
@@ -185,14 +184,12 @@ export const processRecurrentSupports = async () => {
     try {
       await createTicket(ticketData, systemUser);
       
-      // Calcular la siguiente ejecución
       const actualSiguiente = new Date(item.siguiente_ejecucion);
       let nuevaSiguiente = calcNextExecution(actualSiguiente, item.frecuencia);
       
       const hoy = new Date();
       hoy.setHours(0, 0, 0, 0);
       
-      // Evitar bucles infinitos si la fecha es muy vieja: avanzar hasta superar el día de hoy
       while (nuevaSiguiente <= hoy) {
         nuevaSiguiente = calcNextExecution(nuevaSiguiente, item.frecuencia);
       }
@@ -214,27 +211,25 @@ export const processRecurrentSupports = async () => {
   }
 };
 
-// Iniciar programador Cron en memoria (evalúa cada 1 hora)
 export const startRecurrentSupportCron = () => {
   const ONE_HOUR = 60 * 60 * 1000;
-  console.log('[Cron] Inicializando programador de Soportes Recurrentes (Frecuencia: 1 hora)...');
+  console.log('Inicializando programador de Soportes Recurrentes');
   
-  // Ejecución inicial tras el arranque
   setTimeout(async () => {
     try {
-      console.log('[Cron] Ejecutando verificación inicial de Soportes Recurrentes...');
+      console.log('Ejecutando verificación inicial de Soportes Recurrentes');
       await processRecurrentSupports();
     } catch (e) {
-      console.error('[Cron] Error en la verificación inicial de recurrentes:', e);
+      console.error('Error en la verificación inicial de recurrentes:', e);
     }
-  }, 5000); // Esperar 5 segundos tras arrancar para que la BD esté disponible
+  }, 5000);
 
   setInterval(async () => {
     try {
-      console.log('[Cron] Evaluando Soportes Recurrentes programados...');
+      console.log('Evaluando Soportes Recurrentes programados...');
       await processRecurrentSupports();
     } catch (e) {
-      console.error('[Cron] Error al procesar soportes recurrentes:', e);
+      console.error('Error al procesar soportes recurrentes:', e);
     }
   }, ONE_HOUR);
 };

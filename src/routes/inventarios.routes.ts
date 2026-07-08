@@ -23,6 +23,7 @@ export const inventariosRouter = Router();
  *         description: Lista de activos
  */
 inventariosRouter.get('/', requireAuth, requireAdminOrTecnico, ctrl.getActivos);
+inventariosRouter.get('/autogenerar-codigo', requireAuth, requireAdminOrTecnico, ctrl.autogenerarCodigo);
 
 /**
  * @openapi

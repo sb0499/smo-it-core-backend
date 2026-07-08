@@ -46,24 +46,41 @@ export const createTicket = async (data: any, currentUser: any) => {
   } else if (currentUser.rol_nombre === 'ADMIN' && data.tecnico_id) {
     tecnicoAsignado = data.tecnico_id;
   } else {
-    // Asignación automática (solamente a técnicos N1 asignados a ese CC)
-    const esDiaSemana = diaSemana >= 1 && diaSemana <= 5;
-    if (esDiaSemana) {
+    // Verificar si es una sede con calendario especial (Gametown, El Teatro, Apparca)
+    let isSpecialCompany = false;
+    let specialSedeName = '';
+    if (data.empresa_id) {
+      const [empRows] = await pool.query<RowDataPacket[]>('SELECT nombre FROM empresa WHERE id = ?', [data.empresa_id]);
+      if (empRows.length > 0) {
+        specialSedeName = empRows[0].nombre.toUpperCase();
+        isSpecialCompany = ['GAMETOWN', 'EL TEATRO', 'APPARCA'].some(name => specialSedeName.includes(name));
+      }
+    }
+
+    // Gametown, El Teatro, Apparca trabajan de Martes (2) a Sábado (6).
+    // Las demás de Lunes (1) a Viernes (5).
+    const esDiaTrabajo = isSpecialCompany 
+      ? (diaSemana >= 2 && diaSemana <= 6)
+      : (diaSemana >= 1 && diaSemana <= 5);
+
+    if (esDiaTrabajo) {
       // 1. Intentar asignación dinámica por Centro Comercial - CC (pivot usuario_empresa)
       if (data.empresa_id) {
+        // En empresas especiales no se toma en cuenta si son N1 o N2
+        const techNivelFilter = isSpecialCompany ? '' : "AND u.nivel_soporte = 'N1'";
         const [techRows] = await pool.query<RowDataPacket[]>(
           `SELECT u.id 
            FROM usuario u
            JOIN usuario_empresa ue ON u.id = ue.usuario_id
            JOIN rol r ON u.rol_id = r.id
-           WHERE ue.empresa_id = ? AND r.nombre = 'TECNICO' AND u.nivel_soporte = 'N1' AND u.is_active = 1`,
+           WHERE ue.empresa_id = ? AND r.nombre = 'TECNICO' ${techNivelFilter} AND u.is_active = 1`,
           [data.empresa_id]
         );
         if (techRows.length > 0) {
           if (techRows.length === 1) {
             tecnicoAsignado = techRows[0].id;
           } else {
-            // Balancear entre los técnicos N1 de esa sede/empresa
+            // Balancear entre los técnicos de esa sede/empresa
             const techIds = techRows.map(t => t.id);
             const [balanceoSede] = await pool.query<RowDataPacket[]>(
               `SELECT u.id, COUNT(t.id) as total_tickets
@@ -80,14 +97,15 @@ export const createTicket = async (data: any, currentUser: any) => {
         }
       }
 
-      // 2. Si no hay técnico N1 para esa sede, balanceo global de técnicos N1
+      // 2. Si no hay técnico para esa sede, balanceo global de técnicos
       if (!tecnicoAsignado) {
+        const fallbackNivelFilter = isSpecialCompany ? '' : "AND u.nivel_soporte = 'N1'";
         const [balanceo] = await pool.query<RowDataPacket[]>(
           `SELECT u.id, COUNT(t.id) as total_tickets
            FROM usuario u
            JOIN rol r ON u.rol_id = r.id
            LEFT JOIN ticket t ON u.id = t.tecnico_id AND t.estado IN ('Nuevo', 'Pendiente')
-           WHERE r.nombre = 'TECNICO' AND u.nivel_soporte = 'N1' AND u.is_active = 1
+           WHERE r.nombre = 'TECNICO' ${fallbackNivelFilter} AND u.is_active = 1
            GROUP BY u.id
            ORDER BY total_tickets ASC
            LIMIT 1`
@@ -95,7 +113,7 @@ export const createTicket = async (data: any, currentUser: any) => {
         if (balanceo.length > 0) tecnicoAsignado = balanceo[0].id;
       }
     } else {
-      // Fines de semana y Feriados
+      // Fines de semana / días libres y Feriados
       const fechaHoy = ahora.toISOString().split('T')[0];
       const [guardiaRows] = await pool.query<RowDataPacket[]>(
         `SELECT tecnico_id FROM guardia_feriado WHERE fecha = ?`,
@@ -107,12 +125,13 @@ export const createTicket = async (data: any, currentUser: any) => {
 
       // Fallback por si no hay guardia registrada en esa fecha
       if (!tecnicoAsignado) {
+        const fallbackNivelFilter = isSpecialCompany ? '' : "AND u.nivel_soporte = 'N1'";
         const [balanceo] = await pool.query<RowDataPacket[]>(
           `SELECT u.id, COUNT(t.id) as total_tickets
            FROM usuario u
            JOIN rol r ON u.rol_id = r.id
            LEFT JOIN ticket t ON u.id = t.tecnico_id AND t.estado IN ('Nuevo', 'Pendiente')
-           WHERE r.nombre = 'TECNICO' AND u.nivel_soporte = 'N1' AND u.is_active = 1
+           WHERE r.nombre = 'TECNICO' ${fallbackNivelFilter} AND u.is_active = 1
            GROUP BY u.id
            ORDER BY total_tickets ASC
            LIMIT 1`
@@ -249,6 +268,15 @@ export const updateTicket = async (ticketId: number, data: any, currentUser?: an
 
   if (currentUser) {
     let logs: string[] = [];
+    if (
+      data.nivel_soporte === 'N3' || 
+      data.estado === 'Escalado a Proyecto' || 
+      data.estado === 'Escalado a Proveedor'
+    ) {
+      if (currentUser.rol_nombre !== 'ADMIN' && currentUser.nivel_soporte !== 'N2') {
+        throw new Error('Solo el personal de Nivel 2 o Administradores pueden elevar un soporte a Nivel 3 o a Proyecto.');
+      }
+    }
     if (data.estado !== undefined && data.estado !== tOld.estado) {
       logs.push(`Estado cambiado de "${tOld.estado}" a "${data.estado}"`);
       
@@ -567,12 +595,12 @@ export const generarReporteSemanalExcel = async (rolUsuario: string, usuarioId: 
   // 1. Título Superior (Banner Premium)
   worksheet.mergeCells('A1:J1');
   const titleCell = worksheet.getCell('A1');
-  titleCell.value = 'SMO IT CORE - REPORTE DE BITÁCORAS DE SOPORTES REALIZADOS';
+  titleCell.value = 'REPORTE DE BITÁCORAS DE SOPORTES REALIZADOS';
   titleCell.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFF' } };
   titleCell.fill = {
     type: 'pattern',
     pattern: 'solid',
-    fgColor: { argb: '1F4E79' } // Azul Oscuro Corporativo
+    fgColor: { argb: '1F4E79' }
   };
   titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
   worksheet.getRow(1).height = 40;
