@@ -2,9 +2,28 @@ import { Response } from 'express';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import * as consumibleService from '../services/consumible.service';
 
-export const getConsumibles = async (_req: AuthRequest, res: Response): Promise<void> => {
-  const consumibles = await consumibleService.getConsumibles();
-  res.json(consumibles);
+import { pool } from '../db/connection';
+
+export const getConsumibles = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const search = (req.query.search as string) || '';
+
+    let empresaIds: number[] | undefined = undefined;
+    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO' && req.currentUser.nivel_soporte === 'N1') {
+      const [rows] = await pool.query<any[]>(
+        'SELECT empresa_id FROM usuario_empresa WHERE usuario_id = ?',
+        [req.currentUser.id]
+      );
+      empresaIds = rows.map(r => r.empresa_id);
+    }
+
+    const result = await consumibleService.getConsumibles(page, limit, search, empresaIds);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ detail: 'Error al obtener consumibles', error: error.message });
+  }
 };
 
 export const createConsumible = async (req: AuthRequest, res: Response): Promise<void> => {

@@ -2,20 +2,76 @@ import { pool } from '../db/connection';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { createTicket } from './ticket.service';
 
-export const getActivos = async (skip = 0, limit = 100) => {
-  const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT a.*, p.nombre as persona_nombre, p.cedula as persona_cedula,
-            prov.nombre as proveedor_nombre, prov.contacto as proveedor_contacto,
-            te.nombre as tipo_equipo_nombre, e.nombre as empresa_nombre
-     FROM activo a
-     LEFT JOIN persona p ON a.persona_id = p.id
-     LEFT JOIN proveedor prov ON a.proveedor_id = prov.id
-     LEFT JOIN tipo_equipo te ON a.tipo_equipo_id = te.id
-     LEFT JOIN empresa e ON a.empresa_id = e.id
-     LIMIT ? OFFSET ?`,
-    [limit, skip]
-  );
-  return rows;
+export const getActivos = async (
+  page = 1,
+  limit = 10,
+  search = '',
+  estado = '',
+  empresaIds?: number[]
+) => {
+  const skip = (page - 1) * limit;
+  let whereClauses: string[] = [];
+  const params: any[] = [];
+
+  if (empresaIds && empresaIds.length > 0) {
+    whereClauses.push(`a.empresa_id IN (${empresaIds.map(() => '?').join(',')})`);
+    params.push(...empresaIds);
+  } else if (empresaIds) {
+    whereClauses.push('1=0');
+  }
+
+  if (estado && estado !== 'todos') {
+    whereClauses.push('a.estado = ?');
+    params.push(estado);
+  } else {
+    whereClauses.push("a.estado != 'Reciclaje'");
+  }
+
+  if (search) {
+    const searchWildcard = `%${search}%`;
+    whereClauses.push(
+      `(a.codigo LIKE ? OR a.serial LIKE ? OR a.marca LIKE ? OR a.modelo LIKE ? OR e.nombre LIKE ? OR te.nombre LIKE ?)`
+    );
+    params.push(searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard);
+  }
+
+  const whereStr = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
+
+  // Get total count
+  const countQuery = `
+    SELECT COUNT(*) as count 
+    FROM activo a 
+    LEFT JOIN empresa e ON a.empresa_id = e.id 
+    LEFT JOIN tipo_equipo te ON a.tipo_equipo_id = te.id
+    ${whereStr}
+  `;
+  const [countRows] = await pool.query<RowDataPacket[]>(countQuery, params);
+  const total = countRows[0]?.count || 0;
+
+  // Get paginated data
+  let selectQuery = `
+    SELECT a.*, p.nombre as persona_nombre, p.cedula as persona_cedula,
+           prov.nombre as proveedor_nombre, prov.contacto as proveedor_contacto,
+           te.nombre as tipo_equipo_nombre, e.nombre as empresa_nombre
+    FROM activo a
+    LEFT JOIN persona p ON a.persona_id = p.id
+    LEFT JOIN proveedor prov ON a.proveedor_id = prov.id
+    LEFT JOIN tipo_equipo te ON a.tipo_equipo_id = te.id
+    LEFT JOIN empresa e ON a.empresa_id = e.id
+    ${whereStr}
+    ORDER BY a.created_at DESC
+    LIMIT ? OFFSET ?
+  `;
+  
+  const selectParams = [...params, limit, skip];
+  const [dataRows] = await pool.query<RowDataPacket[]>(selectQuery, selectParams);
+
+  return {
+    total,
+    page,
+    limit,
+    data: dataRows
+  };
 };
 
 export const generateUniqueCode = async (empresaId: number, tipoEquipoId: number): Promise<string> => {
@@ -24,14 +80,15 @@ export const generateUniqueCode = async (empresaId: number, tipoEquipoId: number
   if (empresaRows.length === 0) throw new Error('Sede no encontrada.');
   const sedeName = empresaRows[0].nombre;
 
-  // 2. Fetch Tipo Equipo name
-  const [tipoRows] = await pool.query<RowDataPacket[]>('SELECT nombre FROM tipo_equipo WHERE id = ?', [tipoEquipoId]);
+  // 2. Fetch Tipo Equipo name and abbreviation
+  const [tipoRows] = await pool.query<RowDataPacket[]>('SELECT nombre, abreviacion FROM tipo_equipo WHERE id = ?', [tipoEquipoId]);
   if (tipoRows.length === 0) throw new Error('Tipo de equipo no encontrado.');
   const tipoName = tipoRows[0].nombre;
+  const tipoAbrev = tipoRows[0].abreviacion;
 
-  // 3. Generate prefixes (first 3 letters, uppercase)
+  // 3. Generate prefixes
   const cleanSede = sedeName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase();
-  const cleanTipo = tipoName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase();
+  const cleanTipo = tipoAbrev ? tipoAbrev.toUpperCase() : tipoName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase();
   const prefix = `${cleanSede}-${cleanTipo}`;
 
   // 4. Query existing assets with the same prefix to find the next sequential number
@@ -197,9 +254,9 @@ export const cambiarEstadoActivo = async (activoId: number, nuevoEstado: string,
   return activo;
 };
 
-export const getMovimientosGlobal = async (skip = 0, limit = 100) => {
-  const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT m.*,
+export const getMovimientosGlobal = async (skip = 0, limit = 100, empresaIds?: number[]) => {
+  let query = `
+    SELECT m.*,
             p1.nombre as persona_entrega_nombre, p1.cedula as persona_entrega_cedula,
             p2.nombre as persona_recibe_nombre, p2.cedula as persona_recibe_cedula,
             a.codigo as activo_codigo, a.marca as activo_marca, a.modelo as activo_modelo,
@@ -209,9 +266,141 @@ export const getMovimientosGlobal = async (skip = 0, limit = 100) => {
      LEFT JOIN persona p2 ON m.hacia_persona_id = p2.id
      JOIN activo a ON m.activo_id = a.id
      JOIN usuario u ON m.usuario_id = u.id
-     ORDER BY m.fecha DESC
-     LIMIT ? OFFSET ?`,
-    [limit, skip]
+  `;
+  const params: any[] = [];
+
+  if (empresaIds && empresaIds.length > 0) {
+    query += ` WHERE a.empresa_id IN (${empresaIds.map(() => '?').join(',')})`;
+    params.push(...empresaIds);
+  } else if (empresaIds) {
+    query += ` WHERE 1=0`;
+  }
+
+  query += ` ORDER BY m.fecha DESC LIMIT ? OFFSET ?`;
+  params.push(limit, skip);
+
+  const [rows] = await pool.query<RowDataPacket[]>(query, params);
+  return rows;
+};
+
+export const updateActivo = async (
+  activoId: number,
+  data: {
+    serial: string;
+    marca: string;
+    modelo: string;
+    especificaciones?: string;
+    estado?: string;
+    persona_id?: number | null;
+    proveedor_id?: number | null;
+    fecha_compra?: string | null;
+    tipo_equipo_id?: number | null;
+    empresa_id?: number | null;
+    observaciones?: string;
+  },
+  usuarioId: number
+) => {
+  const [existing] = await pool.query<RowDataPacket[]>(`SELECT * FROM activo WHERE id = ?`, [activoId]);
+  if (existing.length === 0) return null;
+  const old = existing[0];
+
+  const updates: string[] = [];
+  const params: any[] = [];
+  const changes: string[] = [];
+
+  const fieldsToCompare = [
+    { key: 'serial', label: 'Serial' },
+    { key: 'marca', label: 'Marca' },
+    { key: 'modelo', label: 'Modelo' },
+    { key: 'especificaciones', label: 'Especificaciones' },
+    { key: 'estado', label: 'Estado' },
+    { key: 'persona_id', label: 'Persona' },
+    { key: 'proveedor_id', label: 'Proveedor' },
+    { key: 'fecha_compra', label: 'Fecha de Compra' },
+    { key: 'tipo_equipo_id', label: 'Tipo de Equipo' },
+    { key: 'empresa_id', label: 'Sede/Empresa' },
+    { key: 'observaciones', label: 'Observaciones' }
+  ];
+
+  for (const f of fieldsToCompare) {
+    const newVal = (data as any)[f.key];
+    const oldVal = old[f.key];
+
+    let isChanged = false;
+    if (newVal !== undefined) {
+      if (newVal === null || newVal === 'null' || newVal === '') {
+        if (oldVal !== null && oldVal !== '') {
+          isChanged = true;
+        }
+      } else {
+        if (String(newVal).trim() !== String(oldVal || '').trim()) {
+          isChanged = true;
+        }
+      }
+    }
+
+    if (isChanged) {
+      updates.push(`${f.key} = ?`);
+      const finalVal = (newVal === null || newVal === 'null' || newVal === '') ? null : newVal;
+      params.push(finalVal);
+
+      let oldDisplay = oldVal;
+      let newDisplay = newVal;
+
+      if (f.key === 'persona_id') {
+        const [oldPers] = await pool.query<any[]>('SELECT nombre FROM persona WHERE id = ?', [oldVal]);
+        const [newPers] = await pool.query<any[]>('SELECT nombre FROM persona WHERE id = ?', [newVal]);
+        oldDisplay = oldPers[0]?.nombre || 'Bodega';
+        newDisplay = newPers[0]?.nombre || 'Bodega';
+      } else if (f.key === 'tipo_equipo_id') {
+        const [oldTe] = await pool.query<any[]>('SELECT nombre FROM tipo_equipo WHERE id = ?', [oldVal]);
+        const [newTe] = await pool.query<any[]>('SELECT nombre FROM tipo_equipo WHERE id = ?', [newVal]);
+        oldDisplay = oldTe[0]?.nombre || 'Ninguno';
+        newDisplay = newTe[0]?.nombre || 'Ninguno';
+      } else if (f.key === 'empresa_id') {
+        const [oldEmp] = await pool.query<any[]>('SELECT nombre FROM empresa WHERE id = ?', [oldVal]);
+        const [newEmp] = await pool.query<any[]>('SELECT nombre FROM empresa WHERE id = ?', [newVal]);
+        oldDisplay = oldEmp[0]?.nombre || 'Ninguna';
+        newDisplay = newEmp[0]?.nombre || 'Ninguna';
+      }
+
+      changes.push(`${f.label}: de "${oldDisplay || ''}" a "${newDisplay || ''}"`);
+    }
+  }
+
+  if (updates.length === 0) {
+    return old;
+  }
+
+  params.push(activoId);
+  await pool.query(`UPDATE activo SET ${updates.join(', ')} WHERE id = ?`, params);
+
+  const obsLog = changes.join(' | ');
+  await pool.query(
+    `INSERT INTO historial_cambios_activo (activo_id, usuario_id, cambios) VALUES (?, ?, ?)`,
+    [activoId, usuarioId, obsLog]
+  );
+
+  const [rows] = await pool.query<RowDataPacket[]>(`
+    SELECT a.*, p.nombre as persona_nombre, te.nombre as tipo_equipo_nombre, e.nombre as empresa_nombre
+    FROM activo a
+    LEFT JOIN persona p ON a.persona_id = p.id
+    LEFT JOIN tipo_equipo te ON a.tipo_equipo_id = te.id
+    LEFT JOIN empresa e ON a.empresa_id = e.id
+    WHERE a.id = ?`,
+    [activoId]
+  );
+  return rows[0];
+};
+
+export const getHistorialCambiosActivo = async (activoId: number) => {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT h.*, u.nombre_completo as usuario_nombre
+     FROM historial_cambios_activo h
+     JOIN usuario u ON h.usuario_id = u.id
+     WHERE h.activo_id = ?
+     ORDER BY h.fecha DESC`,
+    [activoId]
   );
   return rows;
 };
