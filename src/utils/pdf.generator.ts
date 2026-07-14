@@ -89,7 +89,6 @@ export const generarActaMovimiento = (movimiento: any): Promise<Buffer> => {
     doc.fillColor('#6b7280').fontSize(9).font('Helvetica')
        .text(receptorCedula, 325, firmaY + 75, { width: 220, align: 'center' });
 
-    // Footer
     doc.fillColor('#9ca3af').fontSize(8).font('Helvetica')
        .text('Documento generado automáticamente por Soporte TI SMO', 50, 750, { align: 'center' });
 
