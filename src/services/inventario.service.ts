@@ -52,12 +52,14 @@ export const getActivos = async (
   let selectQuery = `
     SELECT a.*, p.nombre as persona_nombre, p.cedula as persona_cedula,
            prov.nombre as proveedor_nombre, prov.contacto as proveedor_contacto,
-           te.nombre as tipo_equipo_nombre, e.nombre as empresa_nombre
+           te.nombre as tipo_equipo_nombre, e.nombre as empresa_nombre,
+           b.nombre as bodega_nombre
     FROM activo a
     LEFT JOIN persona p ON a.persona_id = p.id
     LEFT JOIN proveedor prov ON a.proveedor_id = prov.id
     LEFT JOIN tipo_equipo te ON a.tipo_equipo_id = te.id
     LEFT JOIN empresa e ON a.empresa_id = e.id
+    LEFT JOIN bodega b ON a.bodega_id = b.id
     ${whereStr}
     ORDER BY a.created_at DESC
     LIMIT ? OFFSET ?
@@ -114,7 +116,7 @@ export const generateUniqueCode = async (empresaId: number, tipoEquipoId: number
 export const createActivo = async (data: {
   codigo?: string; serial: string; marca: string; modelo: string;
   especificaciones?: string; persona_id?: number; proveedor_id?: number; fecha_compra?: string;
-  tipo_equipo_id?: number; empresa_id?: number;
+  tipo_equipo_id?: number; empresa_id?: number; bodega_id?: number;
 }) => {
   let finalCodigo = data.codigo || '';
   if (data.empresa_id && data.tipo_equipo_id && !finalCodigo) {
@@ -125,21 +127,23 @@ export const createActivo = async (data: {
 
   const estado = data.persona_id ? 'Asignado' : 'Stock';
   const [result] = await pool.query<ResultSetHeader>(
-    `INSERT INTO activo (codigo, serial, marca, modelo, especificaciones, estado, persona_id, proveedor_id, fecha_compra, tipo_equipo_id, empresa_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO activo (codigo, serial, marca, modelo, especificaciones, estado, persona_id, proveedor_id, fecha_compra, tipo_equipo_id, empresa_id, bodega_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [finalCodigo, data.serial, data.marca, data.modelo,
-     data.especificaciones || null, estado, data.persona_id || null, data.proveedor_id || null, data.fecha_compra || null, data.tipo_equipo_id || null, data.empresa_id || null]
+     data.especificaciones || null, estado, data.persona_id || null, data.proveedor_id || null, data.fecha_compra || null, data.tipo_equipo_id || null, data.empresa_id || null, data.bodega_id || null]
   );
   
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT a.*, p.nombre as persona_nombre, p.cedula as persona_cedula,
             prov.nombre as proveedor_nombre, prov.contacto as proveedor_contacto,
-            te.nombre as tipo_equipo_nombre, e.nombre as empresa_nombre
+            te.nombre as tipo_equipo_nombre, e.nombre as empresa_nombre,
+            b.nombre as bodega_nombre
      FROM activo a
      LEFT JOIN persona p ON a.persona_id = p.id
      LEFT JOIN proveedor prov ON a.proveedor_id = prov.id
      LEFT JOIN tipo_equipo te ON a.tipo_equipo_id = te.id
      LEFT JOIN empresa e ON a.empresa_id = e.id
+     LEFT JOIN bodega b ON a.bodega_id = b.id
      WHERE a.id = ?`,
     [result.insertId]
   );
@@ -184,11 +188,13 @@ export const getMovimiento = async (movimientoId: number) => {
             p1.nombre as persona_entrega_nombre, p1.cedula as persona_entrega_cedula,
             p2.nombre as persona_recibe_nombre, p2.cedula as persona_recibe_cedula,
             a.codigo as activo_codigo, a.marca as activo_marca, a.modelo as activo_modelo,
-            a.serial as activo_serial
+            a.serial as activo_serial,
+            u.nombre_completo as usuario_nombre
      FROM movimiento_inventario m
      LEFT JOIN persona p1 ON m.desde_persona_id = p1.id
      LEFT JOIN persona p2 ON m.hacia_persona_id = p2.id
      JOIN activo a ON m.activo_id = a.id
+     LEFT JOIN usuario u ON m.usuario_id = u.id
      WHERE m.id = ?`,
     [movimientoId]
   );
@@ -296,6 +302,7 @@ export const updateActivo = async (
     fecha_compra?: string | null;
     tipo_equipo_id?: number | null;
     empresa_id?: number | null;
+    bodega_id?: number | null;
     observaciones?: string;
   },
   usuarioId: number
@@ -319,6 +326,7 @@ export const updateActivo = async (
     { key: 'fecha_compra', label: 'Fecha de Compra' },
     { key: 'tipo_equipo_id', label: 'Tipo de Equipo' },
     { key: 'empresa_id', label: 'Sede/Empresa' },
+    { key: 'bodega_id', label: 'Bodega' },
     { key: 'observaciones', label: 'Observaciones' }
   ];
 
@@ -362,6 +370,11 @@ export const updateActivo = async (
         const [newEmp] = await pool.query<any[]>('SELECT nombre FROM empresa WHERE id = ?', [newVal]);
         oldDisplay = oldEmp[0]?.nombre || 'Ninguna';
         newDisplay = newEmp[0]?.nombre || 'Ninguna';
+      } else if (f.key === 'bodega_id') {
+        const [oldBod] = await pool.query<any[]>('SELECT nombre FROM bodega WHERE id = ?', [oldVal]);
+        const [newBod] = await pool.query<any[]>('SELECT nombre FROM bodega WHERE id = ?', [newVal]);
+        oldDisplay = oldBod[0]?.nombre || 'Ninguna';
+        newDisplay = newBod[0]?.nombre || 'Ninguna';
       }
 
       changes.push(`${f.label}: de "${oldDisplay || ''}" a "${newDisplay || ''}"`);
@@ -382,11 +395,13 @@ export const updateActivo = async (
   );
 
   const [rows] = await pool.query<RowDataPacket[]>(`
-    SELECT a.*, p.nombre as persona_nombre, te.nombre as tipo_equipo_nombre, e.nombre as empresa_nombre
+    SELECT a.*, p.nombre as persona_nombre, te.nombre as tipo_equipo_nombre, e.nombre as empresa_nombre,
+           b.nombre as bodega_nombre
     FROM activo a
     LEFT JOIN persona p ON a.persona_id = p.id
     LEFT JOIN tipo_equipo te ON a.tipo_equipo_id = te.id
     LEFT JOIN empresa e ON a.empresa_id = e.id
+    LEFT JOIN bodega b ON a.bodega_id = b.id
     WHERE a.id = ?`,
     [activoId]
   );

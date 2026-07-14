@@ -86,6 +86,18 @@ async function initDbSchema() {
       ) ENGINE=InnoDB;
     `);
 
+    // Create bodega table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS bodega (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        nombre VARCHAR(100) NOT NULL,
+        empresa_id INT NOT NULL,
+        descripcion VARCHAR(255) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT fk_bodega_empresa FOREIGN KEY (empresa_id) REFERENCES empresa(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB;
+    `);
+
     // 2. Check and modify activo table columns
     const [colsActivo] = await pool.query<any[]>(`SHOW COLUMNS FROM activo`);
     const colNames = colsActivo.map((c: any) => c.Field);
@@ -126,6 +138,12 @@ async function initDbSchema() {
       console.log('Adding tipo_inventario_id column to activo table...');
       await pool.query(`ALTER TABLE activo ADD COLUMN tipo_inventario_id INT NULL`);
       await pool.query(`ALTER TABLE activo ADD CONSTRAINT fk_activo_tipo_inventario FOREIGN KEY (tipo_inventario_id) REFERENCES tipo_inventario(id) ON DELETE SET NULL`);
+    }
+
+    if (!colNames.includes('bodega_id')) {
+      console.log('Adding bodega_id column to activo table...');
+      await pool.query(`ALTER TABLE activo ADD COLUMN bodega_id INT NULL`);
+      await pool.query(`ALTER TABLE activo ADD CONSTRAINT fk_activo_bodega FOREIGN KEY (bodega_id) REFERENCES bodega(id) ON DELETE SET NULL`);
     }
 
     if (colNames.includes('origen_excel')) {
@@ -197,6 +215,27 @@ async function initDbSchema() {
       console.log('Adding miembros column to proyecto table...');
       await pool.query(`ALTER TABLE proyecto ADD COLUMN miembros TEXT NULL`);
       console.log('proyecto table migration completed.');
+    }
+
+    // Seed default bodegas for each company if bodega table is empty
+    const [bodegaCount] = await pool.query<any[]>(`SELECT COUNT(*) as count FROM bodega`);
+    if (bodegaCount[0] && bodegaCount[0].count === 0) {
+      console.log('Seeding default bodegas for each Sede/Empresa...');
+      const [empresas] = await pool.query<any[]>(`SELECT id, nombre FROM empresa`);
+      for (const emp of empresas) {
+        await pool.query(`INSERT INTO bodega (nombre, empresa_id, descripcion) VALUES (?, ?, ?)`, 
+          [`Bodega Central ${emp.nombre}`, emp.id, `Bodega principal de la sede ${emp.nombre}`]
+        );
+      }
+
+      // Link existing assets that have a null persona_id to their company's newly created default bodega
+      console.log('Linking existing assets in stock to default bodegas...');
+      await pool.query(`
+        UPDATE activo a
+        JOIN bodega b ON a.empresa_id = b.empresa_id
+        SET a.bodega_id = b.id
+        WHERE a.persona_id IS NULL AND a.bodega_id IS NULL
+      `);
     }
 
     console.log('Database schema initialization completed.');

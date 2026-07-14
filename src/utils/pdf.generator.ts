@@ -12,7 +12,7 @@ export const generarActaMovimiento = (movimiento: any): Promise<Buffer> => {
     // Encabezado institucional
     doc.fillColor('#1e3a8a').fontSize(22).font('Helvetica-Bold').text('SMO IT CORE');
     doc.fillColor('#4b5563').fontSize(12).font('Helvetica').text('SHOPPING MANAGEMENTS OPERADORA');
-    doc.fillColor('#9ca3af').fontSize(10).text('DEPARTAMENTO DE TECNOLOGÍA E INFORMACIÓN');
+    doc.fillColor('#9ca3af').fontSize(10).text('DEPARTAMENTO DE TI');
 
     // Número de acta y fecha
     doc.moveUp(3);
@@ -73,7 +73,7 @@ export const generarActaMovimiento = (movimiento: any): Promise<Buffer> => {
     doc.fillColor('#111827').fontSize(11).font('Helvetica-Bold')
        .text(movimiento.usuario_nombre, 50, firmaY + 60, { width: 220, align: 'center' });
     doc.fillColor('#6b7280').fontSize(9).font('Helvetica')
-       .text('Soporte Técnico SMO IT CORE', 50, firmaY + 75, { width: 220, align: 'center' });
+       .text('Soporte TI SMO', 50, firmaY + 75, { width: 220, align: 'center' });
 
     // Receptor
     doc.fillColor('#6b7280').fontSize(10).font('Helvetica-Bold')
@@ -91,7 +91,7 @@ export const generarActaMovimiento = (movimiento: any): Promise<Buffer> => {
 
     // Footer
     doc.fillColor('#9ca3af').fontSize(8).font('Helvetica')
-       .text('Documento generado automáticamente por SMO IT CORE', 50, 750, { align: 'center' });
+       .text('Documento generado automáticamente por Soporte TI SMO', 50, 750, { align: 'center' });
 
     doc.end();
   });
