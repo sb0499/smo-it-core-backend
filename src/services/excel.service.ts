@@ -123,6 +123,8 @@ export const excelService = {
     const idxSerial = getColIndex(['SERIAL', 'SERIE', 'S/N']);
     const idxObservaciones = getColIndex(['OBSERVACIONES', 'OBS', 'COMENTARIOS', 'DETALLE']);
     const idxPrecio = getColIndex(['PRECIO REFERENCIAL', 'PRECIO', 'COSTO', 'VALOR']);
+    const idxCodigo = getColIndex(['CODIGO', 'CÓDIGO']);
+    const idxEstado = getColIndex(['ESTADO']);
 
     // Check required columns (at least Empresa and Tipo/Marca are needed to do a meaningful insert)
     if (!idxEmpresa) {
@@ -158,6 +160,8 @@ export const excelService = {
         const observacionesVal = idxObservaciones ? getCellString(row.getCell(idxObservaciones).value) : '';
         const precioVal = idxPrecio ? getCellNumber(row.getCell(idxPrecio).value) : null;
         const cantidadVal = idxCantidad ? Math.max(1, getCellNumber(row.getCell(idxCantidad).value)) : 1;
+        const codigoExcel = idxCodigo ? getCellString(row.getCell(idxCodigo).value) : '';
+        const estadoExcel = idxEstado ? getCellString(row.getCell(idxEstado).value) : '';
 
         if (!empresaName.trim()) {
           result.errors.push(`Fila ${r}: Nombre de empresa/sede vacío.`);
@@ -193,6 +197,19 @@ export const excelService = {
         if (isN1 && !assignedEmpresaIds.includes(empresaId)) {
           result.errors.push(`Fila ${r}: No tienes autorización para registrar activos en la sede "${empresaName}".`);
           continue;
+        }
+
+        let customCodigo: string | null = null;
+        if (codigoExcel.trim()) {
+          const [existingCode] = await pool.query<RowDataPacket[]>(
+            'SELECT id FROM activo WHERE codigo = ?',
+            [codigoExcel.trim().toUpperCase()]
+          );
+          if (existingCode.length > 0) {
+            result.errors.push(`Fila ${r}: El código de activo "${codigoExcel.trim().toUpperCase()}" ya está registrado.`);
+            continue;
+          }
+          customCodigo = codigoExcel.trim().toUpperCase();
         }
 
         if (tipoInvLower.includes('consumible')) {
@@ -276,25 +293,38 @@ export const excelService = {
 
         // --- 5. Determine State ---
         let estado: 'Stock' | 'Asignado' | 'Mantenimiento' | 'Baja' | 'Reciclaje' = 'Stock';
-        if (tipoInvLower.includes('reciclaje')) {
-          estado = 'Reciclaje';
-        } else if (tipoInvLower.includes('asignado')) {
-          estado = 'Asignado';
-        } else if (tipoInvLower.includes('servidor') || tipoInvLower.includes('infraestructura')) {
-          estado = personaId ? 'Asignado' : 'Stock';
-        } else {
+        const rawEstado = estadoExcel.trim().toLowerCase();
+        if (rawEstado.includes('stock') || rawEstado.includes('bodega') || rawEstado.includes('libre') || rawEstado.includes('disponible')) {
           estado = 'Stock';
+        } else if (rawEstado.includes('asignado') || rawEstado.includes('uso') || rawEstado.includes('entregado')) {
+          estado = 'Asignado';
+        } else if (rawEstado.includes('mantenimiento') || rawEstado.includes('taller') || rawEstado.includes('reparacion')) {
+          estado = 'Mantenimiento';
+        } else if (rawEstado.includes('baja') || rawEstado.includes('desechado') || rawEstado.includes('dañado')) {
+          estado = 'Baja';
+        } else if (rawEstado.includes('reciclaje') || rawEstado.includes('chatarra')) {
+          estado = 'Reciclaje';
+        } else {
+          if (tipoInvLower.includes('reciclaje')) {
+            estado = 'Reciclaje';
+          } else if (tipoInvLower.includes('asignado')) {
+            estado = 'Asignado';
+          } else if (tipoInvLower.includes('servidor') || tipoInvLower.includes('infraestructura')) {
+            estado = personaId ? 'Asignado' : 'Stock';
+          } else {
+            estado = 'Stock';
+          }
         }
 
         // Bodega Name mapping
         const bodegaVal = bodegaNombreOpcional || (tipoInvLower.includes('bodega') ? 'Bodega Central' : null);
 
         // --- 6. Insert Loop for quantity ---
-        const loopCount = tipoInvLower.includes('asignado') ? 1 : cantidadVal;
+        const loopCount = (tipoInvLower.includes('asignado') || customCodigo) ? 1 : cantidadVal;
 
         for (let i = 0; i < loopCount; i++) {
           // Generate unique sequential code
-          const codigo = await generateUniqueCode(empresaId, tipoEquipoId);
+          const codigo = customCodigo || await generateUniqueCode(empresaId, tipoEquipoId);
 
           await pool.query(
             `INSERT INTO activo (
