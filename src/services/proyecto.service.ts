@@ -149,33 +149,81 @@ export const recalcularAvanceYEstados = async (proyectoId: number, usuarioId: nu
 };
 
 // --- SERVICIOS DE PROYECTO ---
-export const getProyectos = async (currentUser: any) => {
-  let query = `
-    SELECT DISTINCT p.*, u.nombre_completo as creador_nombre, t.titulo as ticket_titulo
-    FROM proyecto p
-    JOIN usuario u ON p.creador_id = u.id
-    LEFT JOIN ticket t ON p.ticket_origen_id = t.id
-  `;
+export const getProyectos = async (currentUser: any, page?: number, limit?: number, search = '') => {
+  let whereClauses: string[] = [];
   const params: any[] = [];
 
+  // Filter by search query
+  if (search) {
+    const wildcard = `%${search}%`;
+    whereClauses.push(`(p.nombre LIKE ? OR p.descripcion LIKE ? OR t.titulo LIKE ?)`);
+    params.push(wildcard, wildcard, wildcard);
+  }
+
+  // Role filters
+  let joinSql = '';
   if (currentUser.rol_nombre === 'TECNICO') {
-    query += `
+    joinSql = `
       LEFT JOIN tarea_proyecto tp ON tp.proyecto_id = p.id
       LEFT JOIN subtarea_proyecto sp ON sp.tarea_id = tp.id
-      WHERE p.creador_id = ? OR tp.responsable_id = ? OR sp.responsable_id = ?
     `;
+    whereClauses.push(`(p.creador_id = ? OR tp.responsable_id = ? OR sp.responsable_id = ?)`);
     params.push(currentUser.id, currentUser.id, currentUser.id);
   } else if (currentUser.rol_nombre === 'USUARIO') {
-    query += `
-      WHERE p.creador_id = ? OR t.creador_id = ?
-    `;
+    whereClauses.push(`(p.creador_id = ? OR t.creador_id = ?)`);
     params.push(currentUser.id, currentUser.id);
   }
 
-  query += ` ORDER BY p.created_at DESC`;
+  const whereStr = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
 
-  const [rows] = await pool.query<RowDataPacket[]>(query, params);
-  return rows;
+  if (page !== undefined && limit !== undefined) {
+    const skip = (page - 1) * limit;
+
+    // Count query
+    const countQuery = `
+      SELECT COUNT(DISTINCT p.id) as count
+      FROM proyecto p
+      JOIN usuario u ON p.creador_id = u.id
+      LEFT JOIN ticket t ON p.ticket_origen_id = t.id
+      ${joinSql}
+      ${whereStr}
+    `;
+    const [countRows] = await pool.query<RowDataPacket[]>(countQuery, params);
+    const total = countRows[0]?.count || 0;
+
+    // Data query
+    const selectQuery = `
+      SELECT DISTINCT p.*, u.nombre_completo as creador_nombre, t.titulo as ticket_titulo
+      FROM proyecto p
+      JOIN usuario u ON p.creador_id = u.id
+      LEFT JOIN ticket t ON p.ticket_origen_id = t.id
+      ${joinSql}
+      ${whereStr}
+      ORDER BY p.created_at DESC
+      LIMIT ? OFFSET ?
+    `;
+    const [rows] = await pool.query<RowDataPacket[]>(selectQuery, [...params, limit, skip]);
+
+    return {
+      total,
+      page,
+      limit,
+      data: rows
+    };
+  } else {
+    // Return raw list
+    const query = `
+      SELECT DISTINCT p.*, u.nombre_completo as creador_nombre, t.titulo as ticket_titulo
+      FROM proyecto p
+      JOIN usuario u ON p.creador_id = u.id
+      LEFT JOIN ticket t ON p.ticket_origen_id = t.id
+      ${joinSql}
+      ${whereStr}
+      ORDER BY p.created_at DESC
+    `;
+    const [rows] = await pool.query<RowDataPacket[]>(query, params);
+    return rows;
+  }
 };
 
 export const getProyectoById = async (id: number, currentUser: any) => {

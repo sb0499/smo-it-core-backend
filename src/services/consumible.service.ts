@@ -1,7 +1,7 @@
 import { pool } from '../db/connection';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
 
-export const getConsumibles = async (page = 1, limit = 10, search = '', empresaIds?: number[]) => {
+export const getConsumibles = async (page = 1, limit = 10, search = '', empresaIds?: number[], criticalOnly = false) => {
   const skip = (page - 1) * limit;
   let whereClauses: string[] = [];
   const params: any[] = [];
@@ -10,6 +10,10 @@ export const getConsumibles = async (page = 1, limit = 10, search = '', empresaI
     whereClauses.push('(nombre LIKE ? OR descripcion LIKE ?)');
     const searchWildcard = `%${search}%`;
     params.push(searchWildcard, searchWildcard);
+  }
+
+  if (criticalOnly) {
+    whereClauses.push('stock_actual <= stock_minimo');
   }
 
   // Enforce Sede filters for N1 technicians
@@ -40,7 +44,7 @@ export const getConsumibles = async (page = 1, limit = 10, search = '', empresaI
   const total = countRows[0]?.count || 0;
 
   // Get paginated data
-  const selectQuery = `SELECT * FROM consumible ${whereStr} LIMIT ? OFFSET ?`;
+  const selectQuery = `SELECT * FROM consumible ${whereStr} ORDER BY id DESC LIMIT ? OFFSET ?`;
   const selectParams = [...params, limit, skip];
   const [dataRows] = await pool.query<RowDataPacket[]>(selectQuery, selectParams);
 

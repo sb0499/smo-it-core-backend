@@ -1,40 +1,68 @@
 import { pool } from '../db/connection';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { syncMemberChannelKey } from '../db/e2ee';
 
-export const createCanal = async (nombre: string, isPrivate: boolean, creadorId: number) => {
+export const getCanalById = async (canalId: number, usuarioId: number) => {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT c.*, u.nombre_completo as creador_nombre,
+            (SELECT COUNT(*) FROM chat_canal_miembro m WHERE m.canal_id = c.id) as miembros_count,
+            (SELECT u2.nombre_completo 
+             FROM chat_canal_miembro m2 
+             JOIN usuario u2 ON m2.usuario_id = u2.id 
+             WHERE m2.canal_id = c.id AND m2.usuario_id != ? LIMIT 1) as dm_destinatario_nombre,
+            m_self.encrypted_channel_key
+     FROM chat_canal c
+     JOIN usuario u ON c.creador_id = u.id
+     LEFT JOIN chat_canal_miembro m_self ON c.id = m_self.canal_id AND m_self.usuario_id = ?
+     WHERE c.id = ?`,
+    [usuarioId, usuarioId, canalId]
+  );
+  return rows[0];
+};
+
+export const createCanal = async (nombre: string, isPrivate: boolean, creadorId: number, keys?: { [userId: number]: string }) => {
   const [result] = await pool.query<ResultSetHeader>(
     `INSERT INTO chat_canal (nombre, is_private, creador_id) VALUES (?, ?, ?)`,
     [nombre.toLowerCase().replace(/\s+/g, '-'), isPrivate, creadorId]
   );
   
   const canalId = result.insertId;
-  // Añadir creador como miembro automático
-  await pool.query(`INSERT INTO chat_canal_miembro (canal_id, usuario_id) VALUES (?, ?)`, [canalId, creadorId]);
+  
+  if (keys) {
+    for (const [uId, encKey] of Object.entries(keys)) {
+      await pool.query(
+        `INSERT INTO chat_canal_miembro (canal_id, usuario_id, encrypted_channel_key) VALUES (?, ?, ?)`,
+        [canalId, parseInt(uId), encKey]
+      );
+    }
+  } else {
+    await pool.query(`INSERT INTO chat_canal_miembro (canal_id, usuario_id) VALUES (?, ?)`, [canalId, creadorId]);
+  }
 
-  const [rows] = await pool.query<RowDataPacket[]>(`SELECT * FROM chat_canal WHERE id = ?`, [canalId]);
-  return rows[0];
+  return await getCanalById(canalId, creadorId);
 };
 
 export const getCanales = async (usuarioId: number, userRol: string) => {
-  // Ver todos los canales públicos Y los canales privados donde sea miembro (aplica igual para ADMIN)
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT DISTINCT c.*, u.nombre_completo as creador_nombre,
             (SELECT COUNT(*) FROM chat_canal_miembro m WHERE m.canal_id = c.id) as miembros_count,
             (SELECT u2.nombre_completo 
              FROM chat_canal_miembro m2 
              JOIN usuario u2 ON m2.usuario_id = u2.id 
-             WHERE m2.canal_id = c.id AND m2.usuario_id != ? LIMIT 1) as dm_destinatario_nombre
+             WHERE m2.canal_id = c.id AND m2.usuario_id != ? LIMIT 1) as dm_destinatario_nombre,
+            m_self.encrypted_channel_key
      FROM chat_canal c
      JOIN usuario u ON c.creador_id = u.id
      LEFT JOIN chat_canal_miembro m ON c.id = m.canal_id
+     LEFT JOIN chat_canal_miembro m_self ON c.id = m_self.canal_id AND m_self.usuario_id = ?
      WHERE c.is_private = FALSE OR m.usuario_id = ?
      ORDER BY c.nombre ASC`,
-    [usuarioId, usuarioId]
+    [usuarioId, usuarioId, usuarioId]
   );
   return rows;
 };
 
-export const getOrCreateDMChannel = async (usuarioId1: number, usuarioId2: number) => {
+export const getOrCreateDMChannel = async (usuarioId1: number, usuarioId2: number, keys?: { [userId: number]: string }) => {
   const name = usuarioId1 < usuarioId2 
     ? `dm-${usuarioId1}-${usuarioId2}` 
     : `dm-${usuarioId2}-${usuarioId1}`;
@@ -46,7 +74,7 @@ export const getOrCreateDMChannel = async (usuarioId1: number, usuarioId2: numbe
   );
 
   if (existing.length > 0) {
-    return existing[0];
+    return await getCanalById(existing[0].id, usuarioId1);
   }
 
   // Crear canal privado marcado como DM
@@ -58,24 +86,48 @@ export const getOrCreateDMChannel = async (usuarioId1: number, usuarioId2: numbe
   const canalId = result.insertId;
 
   // Registrar a ambos usuarios
-  await pool.query(`INSERT INTO chat_canal_miembro (canal_id, usuario_id) VALUES (?, ?)`, [canalId, usuarioId1]);
-  if (usuarioId1 !== usuarioId2) {
-    await pool.query(`INSERT INTO chat_canal_miembro (canal_id, usuario_id) VALUES (?, ?)`, [canalId, usuarioId2]);
+  if (keys) {
+    for (const [uId, encKey] of Object.entries(keys)) {
+      await pool.query(
+        `INSERT INTO chat_canal_miembro (canal_id, usuario_id, encrypted_channel_key) VALUES (?, ?, ?)`,
+        [canalId, parseInt(uId), encKey]
+      );
+    }
+  } else {
+    await pool.query(`INSERT INTO chat_canal_miembro (canal_id, usuario_id) VALUES (?, ?)`, [canalId, usuarioId1]);
+    if (usuarioId1 !== usuarioId2) {
+      await pool.query(`INSERT INTO chat_canal_miembro (canal_id, usuario_id) VALUES (?, ?)`, [canalId, usuarioId2]);
+    }
   }
 
-  const [rows] = await pool.query<RowDataPacket[]>(`SELECT * FROM chat_canal WHERE id = ?`, [canalId]);
-  return rows[0];
+  return await getCanalById(canalId, usuarioId1);
 };
 
-export const unirMiembro = async (canalId: number, usuarioId: number) => {
+export const unirMiembro = async (canalId: number, usuarioId: number, encryptedChannelKey?: string) => {
   // Verificar si ya es miembro
   const [existing] = await pool.query<RowDataPacket[]>(
     `SELECT * FROM chat_canal_miembro WHERE canal_id = ? AND usuario_id = ?`,
     [canalId, usuarioId]
   );
-  if (existing.length > 0) return true;
+  if (existing.length > 0) {
+    if (encryptedChannelKey) {
+      await pool.query(
+        `UPDATE chat_canal_miembro SET encrypted_channel_key = ? WHERE canal_id = ? AND usuario_id = ?`,
+        [encryptedChannelKey, canalId, usuarioId]
+      );
+    } else {
+      await syncMemberChannelKey(canalId, usuarioId);
+    }
+    return true;
+  }
 
-  await pool.query(`INSERT INTO chat_canal_miembro (canal_id, usuario_id) VALUES (?, ?)`, [canalId, usuarioId]);
+  await pool.query(
+    `INSERT INTO chat_canal_miembro (canal_id, usuario_id, encrypted_channel_key) VALUES (?, ?, ?)`,
+    [canalId, usuarioId, encryptedChannelKey || null]
+  );
+  if (!encryptedChannelKey) {
+    await syncMemberChannelKey(canalId, usuarioId);
+  }
   return true;
 };
 

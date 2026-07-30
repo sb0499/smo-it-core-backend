@@ -1,15 +1,40 @@
 import { pool } from '../db/connection';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
 
-export const getGuardias = async (skip = 0, limit = 100) => {
-  const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT g.*, u.nombre_completo as tecnico_nombre, e.nombre as empresa_nombre FROM guardia_feriado g
-     JOIN usuario u ON g.tecnico_id = u.id
-     LEFT JOIN empresa e ON g.empresa_id = e.id
-     LIMIT ? OFFSET ?`,
-    [limit, skip]
-  );
-  return rows;
+export const getGuardias = async (page?: number, limit?: number) => {
+  if (page !== undefined && limit !== undefined) {
+    const skip = (page - 1) * limit;
+
+    const [countRows] = await pool.query<RowDataPacket[]>(
+      `SELECT COUNT(*) as count FROM guardia_feriado`
+    );
+    const total = countRows[0]?.count || 0;
+
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT g.*, u.nombre_completo as tecnico_nombre, e.nombre as empresa_nombre FROM guardia_feriado g
+       JOIN usuario u ON g.tecnico_id = u.id
+       LEFT JOIN empresa e ON g.empresa_id = e.id
+       ORDER BY g.fecha DESC
+       LIMIT ? OFFSET ?`,
+      [limit, skip]
+    );
+
+    return {
+      total,
+      page,
+      limit,
+      data: rows
+    };
+  } else {
+    // Non-paginated query
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT g.*, u.nombre_completo as tecnico_nombre, e.nombre as empresa_nombre FROM guardia_feriado g
+       JOIN usuario u ON g.tecnico_id = u.id
+       LEFT JOIN empresa e ON g.empresa_id = e.id
+       ORDER BY g.fecha DESC`
+    );
+    return rows;
+  }
 };
 
 export const createGuardia = async (data: { fecha: string; tecnico_id: number; observaciones?: string; empresa_id?: number }) => {

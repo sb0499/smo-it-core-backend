@@ -9,17 +9,18 @@ export const getConsumibles = async (req: AuthRequest, res: Response): Promise<v
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 10;
     const search = (req.query.search as string) || '';
+    const criticalOnly = req.query.criticalOnly === 'true';
 
     let empresaIds: number[] | undefined = undefined;
     if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO' && req.currentUser.nivel_soporte === 'N1') {
       const [rows] = await pool.query<any[]>(
-        'SELECT empresa_id FROM usuario_empresa WHERE usuario_id = ?',
+        'SELECT empresa_id FROM usuario_empresa_inventario WHERE usuario_id = ?',
         [req.currentUser.id]
       );
       empresaIds = rows.map(r => r.empresa_id);
     }
 
-    const result = await consumibleService.getConsumibles(page, limit, search, empresaIds);
+    const result = await consumibleService.getConsumibles(page, limit, search, empresaIds, criticalOnly);
     res.json(result);
   } catch (error: any) {
     res.status(500).json({ detail: 'Error al obtener consumibles', error: error.message });

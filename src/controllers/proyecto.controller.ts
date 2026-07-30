@@ -7,8 +7,16 @@ import fs from 'fs';
 // --- CONTROLLERS DE PROYECTO ---
 export const getProyectos = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const proyectos = await proyectoService.getProyectos(req.currentUser);
-    res.json(proyectos);
+    if (req.query.page || req.query.limit) {
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 10;
+      const search = (req.query.search as string) || '';
+      const result = await proyectoService.getProyectos(req.currentUser, page, limit, search);
+      res.json(result);
+    } else {
+      const proyectos = await proyectoService.getProyectos(req.currentUser);
+      res.json(proyectos);
+    }
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }

@@ -5,7 +5,7 @@ import { pool } from '../db/connection';
 
 const getAssignedEmpresas = async (usuarioId: number): Promise<number[]> => {
   const [rows] = await pool.query<any[]>(
-    'SELECT empresa_id FROM usuario_empresa WHERE usuario_id = ?',
+    'SELECT empresa_id FROM usuario_empresa_inventario WHERE usuario_id = ?',
     [usuarioId]
   );
   return rows.map(r => r.empresa_id);
@@ -15,10 +15,27 @@ export const getBodegas = async (req: AuthRequest, res: Response): Promise<void>
   try {
     let empresaIds: number[] | undefined = undefined;
     if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO' && req.currentUser.nivel_soporte === 'N1') {
-      empresaIds = await getAssignedEmpresas(req.currentUser.id);
+      const allowed = await getAssignedEmpresas(req.currentUser.id);
+      if (req.query.empresa_id) {
+        const sel = parseInt(req.query.empresa_id as string);
+        empresaIds = allowed.includes(sel) ? [sel] : [0];
+      } else {
+        empresaIds = allowed;
+      }
+    } else if (req.query.empresa_id) {
+      empresaIds = [parseInt(req.query.empresa_id as string)];
     }
-    const bodegas = await bodegaService.getBodegas(empresaIds);
-    res.json(bodegas);
+
+    if (req.query.page || req.query.limit) {
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 10;
+      const search = (req.query.search as string) || '';
+      const result = await bodegaService.getBodegas(empresaIds, page, limit, search);
+      res.json(result);
+    } else {
+      const bodegas = await bodegaService.getBodegas(empresaIds);
+      res.json(bodegas);
+    }
   } catch (error: any) {
     res.status(500).json({ detail: 'Error al obtener bodegas', error: error.message });
   }

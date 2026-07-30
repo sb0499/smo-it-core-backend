@@ -1,24 +1,67 @@
 import { pool } from '../db/connection';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
 
-export const getBodegas = async (empresaIds?: number[]) => {
-  let query = `
-    SELECT b.*, e.nombre as empresa_nombre 
-    FROM bodega b 
-    JOIN empresa e ON b.empresa_id = e.id
-  `;
+export const getBodegas = async (empresaIds?: number[], page?: number, limit?: number, search = '') => {
+  let whereClauses: string[] = [];
   const params: any[] = [];
 
   if (empresaIds && empresaIds.length > 0) {
-    query += ` WHERE b.empresa_id IN (${empresaIds.map(() => '?').join(',')})`;
+    whereClauses.push(`b.empresa_id IN (${empresaIds.map(() => '?').join(',')})`);
     params.push(...empresaIds);
   } else if (empresaIds) {
-    query += ` WHERE 1=0`;
+    whereClauses.push('1=0');
   }
 
-  query += ` ORDER BY b.nombre ASC`;
-  const [rows] = await pool.query<RowDataPacket[]>(query, params);
-  return rows;
+  if (search) {
+    const wildcard = `%${search}%`;
+    whereClauses.push(`(b.nombre LIKE ? OR b.descripcion LIKE ? OR e.nombre LIKE ?)`);
+    params.push(wildcard, wildcard, wildcard);
+  }
+
+  const whereStr = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
+
+  if (page !== undefined && limit !== undefined) {
+    const skip = (page - 1) * limit;
+
+    // Count query
+    const [countRows] = await pool.query<RowDataPacket[]>(
+      `SELECT COUNT(*) as count 
+       FROM bodega b 
+       JOIN empresa e ON b.empresa_id = e.id
+       ${whereStr}`,
+      params
+    );
+    const total = countRows[0]?.count || 0;
+
+    // Data query
+    const dataQuery = `
+      SELECT b.*, e.nombre as empresa_nombre 
+      FROM bodega b 
+      JOIN empresa e ON b.empresa_id = e.id
+      ${whereStr}
+      ORDER BY b.created_at DESC
+      LIMIT ? OFFSET ?
+    `;
+    const [rows] = await pool.query<RowDataPacket[]>(dataQuery, [...params, limit, skip]);
+
+    return {
+      total,
+      page,
+      limit,
+      data: rows
+    };
+  } else {
+    // Non-paginated query (for dropdown lists etc.)
+    const query = `
+      SELECT b.*, e.nombre as empresa_nombre 
+      FROM bodega b 
+      JOIN empresa e ON b.empresa_id = e.id
+      ${whereStr}
+      ORDER BY b.nombre ASC
+    `;
+    const [rows] = await pool.query<RowDataPacket[]>(query, params);
+    return rows;
+  }
 };
 
 export const getBodegaById = async (id: number) => {

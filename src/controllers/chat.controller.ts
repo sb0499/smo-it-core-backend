@@ -4,12 +4,12 @@ import * as chatService from '../services/chat.service';
 
 export const createCanal = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { nombre, is_private } = req.body;
+    const { nombre, is_private, keys } = req.body;
     if (!nombre) {
       res.status(400).json({ detail: 'El nombre del canal es obligatorio.' });
       return;
     }
-    const canal = await chatService.createCanal(nombre, !!is_private, req.currentUser.id);
+    const canal = await chatService.createCanal(nombre, !!is_private, req.currentUser.id, keys);
     res.status(201).json(canal);
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
@@ -33,7 +33,8 @@ export const unirMiembro = async (req: AuthRequest, res: Response): Promise<void
       res.status(400).json({ detail: 'Parámetros inválidos.' });
       return;
     }
-    await chatService.unirMiembro(canalId, usuarioId);
+    const { encrypted_channel_key } = req.body;
+    await chatService.unirMiembro(canalId, usuarioId, encrypted_channel_key);
     res.json({ message: 'Miembro añadido con éxito.' });
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
@@ -138,7 +139,7 @@ export const addMensaje = async (req: AuthRequest, res: Response): Promise<void>
 
 export const getOrCreateDMChannel = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { usuario_id } = req.body;
+    const { usuario_id, keys } = req.body;
     if (!usuario_id) {
       res.status(400).json({ detail: 'El usuario_id es obligatorio para iniciar chat directo.' });
       return;
@@ -148,7 +149,7 @@ export const getOrCreateDMChannel = async (req: AuthRequest, res: Response): Pro
       res.status(400).json({ detail: 'usuario_id inválido.' });
       return;
     }
-    const canal = await chatService.getOrCreateDMChannel(req.currentUser.id, targetUserId);
+    const canal = await chatService.getOrCreateDMChannel(req.currentUser.id, targetUserId, keys);
     res.json(canal);
   } catch (error: any) {
     res.status(500).json({ detail: error.message });

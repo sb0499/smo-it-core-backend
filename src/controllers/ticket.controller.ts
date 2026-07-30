@@ -65,3 +65,18 @@ export const getCategorias = async (_req: AuthRequest, res: Response): Promise<v
   const categories = await ticketService.getCategorias();
   res.json(categories);
 };
+
+export const getTicketsPaginated = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const excludeStatus = req.query.excludeStatus as string;
+    const estado = req.query.estado as string;
+    const search = req.query.search as string;
+
+    const result = await ticketService.getTicketsPaginated(req.currentUser, page, limit, excludeStatus, estado, search);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ detail: 'Error al obtener tickets paginados', error: error.message });
+  }
+};

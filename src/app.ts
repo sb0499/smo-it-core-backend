@@ -20,6 +20,7 @@ import reportesRouter from './routes/reportes.routes';
 import { notificacionesRouter } from './routes/notificaciones.routes';
 import { tipoEquiposRouter } from './routes/tipo-equipos.routes';
 import { bodegasRouter } from './routes/bodegas.routes';
+import { credencialesRouter } from './routes/credenciales.routes';
 import path from 'path';
 
 const app = express();
@@ -78,6 +79,7 @@ app.use(`${API}/empresas`, empresasRouter);
 app.use(`${API}/notificaciones`, notificacionesRouter);
 app.use(`${API}/tipo-equipos`, tipoEquiposRouter);
 app.use(`${API}/bodegas`, bodegasRouter);
+app.use(`${API}/credenciales`, credencialesRouter);
 
 // Root health check
 app.get('/', (_req, res) => {

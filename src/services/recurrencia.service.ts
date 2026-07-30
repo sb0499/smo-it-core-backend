@@ -19,14 +19,42 @@ export interface SoporteRecurrente {
   created_at?: string;
 }
 
-export const getSoportesRecurrentes = async () => {
-  const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT sr.*, e.nombre as empresa_nombre 
-     FROM soporte_recurrente sr 
-     LEFT JOIN empresa e ON sr.empresa_id = e.id 
-     ORDER BY sr.id DESC`
-  );
-  return rows;
+export const getSoportesRecurrentes = async (page = 1, limit = 10, search = '') => {
+  const skip = (page - 1) * limit;
+  let whereClauses: string[] = [];
+  const params: any[] = [];
+
+  if (search) {
+    whereClauses.push('(sr.titulo LIKE ? OR sr.descripcion LIKE ? OR sr.categoria LIKE ?)');
+    const wildcard = `%${search}%`;
+    params.push(wildcard, wildcard, wildcard);
+  }
+
+  const whereStr = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
+
+  // Get total count
+  const countQuery = `SELECT COUNT(*) as count FROM soporte_recurrente sr ${whereStr}`;
+  const [countRows] = await pool.query<RowDataPacket[]>(countQuery, params);
+  const total = countRows[0]?.count || 0;
+
+  // Get paginated data
+  const selectQuery = `
+    SELECT sr.*, e.nombre as empresa_nombre 
+    FROM soporte_recurrente sr 
+    LEFT JOIN empresa e ON sr.empresa_id = e.id 
+    ${whereStr}
+    ORDER BY sr.id DESC
+    LIMIT ? OFFSET ?
+  `;
+  const selectParams = [...params, limit, skip];
+  const [dataRows] = await pool.query<RowDataPacket[]>(selectQuery, selectParams);
+
+  return {
+    total,
+    page,
+    limit,
+    data: dataRows
+  };
 };
 
 export const getSoporteRecurrenteById = async (id: number) => {

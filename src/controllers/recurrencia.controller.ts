@@ -2,10 +2,14 @@ import { Response } from 'express';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import * as service from '../services/recurrencia.service';
 
-export const getSoportesRecurrentes = async (_req: AuthRequest, res: Response): Promise<void> => {
+export const getSoportesRecurrentes = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const list = await service.getSoportesRecurrentes();
-    res.json(list);
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const search = (req.query.search as string) || '';
+
+    const result = await service.getSoportesRecurrentes(page, limit, search);
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ detail: 'Error al obtener soportes recurrentes', error: err.message });
   }

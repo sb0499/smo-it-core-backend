@@ -8,7 +8,7 @@ import fs from 'fs';
 
 const getAssignedEmpresas = async (usuarioId: number): Promise<number[]> => {
   const [rows] = await pool.query<any[]>(
-    'SELECT empresa_id FROM usuario_empresa WHERE usuario_id = ?',
+    'SELECT empresa_id FROM usuario_empresa_inventario WHERE usuario_id = ?',
     [usuarioId]
   );
   return rows.map(r => r.empresa_id);

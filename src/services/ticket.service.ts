@@ -745,3 +745,82 @@ export const getCategorias = async (): Promise<CategoriaTicket[]> => {
   );
   return rows as CategoriaTicket[];
 };
+
+export const getTicketsPaginated = async (
+  currentUser: any, 
+  page = 1, 
+  limit = 10, 
+  excludeStatus?: string, 
+  estado?: string, 
+  search?: string
+) => {
+  const skip = (page - 1) * limit;
+  let whereClauses: string[] = [];
+  const params: any[] = [];
+
+  if (currentUser.rol_nombre === 'TECNICO') {
+    whereClauses.push(`t.tecnico_id = ?`);
+    params.push(currentUser.id);
+  } else if (currentUser.rol_nombre === 'USUARIO') {
+    whereClauses.push(`t.creador_id = ?`);
+    params.push(currentUser.id);
+  }
+
+  if (excludeStatus) {
+    whereClauses.push(`t.estado != ?`);
+    params.push(excludeStatus);
+  }
+
+  if (estado && estado !== 'todos') {
+    whereClauses.push(`t.estado = ?`);
+    params.push(estado);
+  }
+
+  if (search) {
+    whereClauses.push(`(t.titulo LIKE ? OR t.descripcion LIKE ? OR t.categoria LIKE ?)`);
+    const wildcard = `%${search}%`;
+    params.push(wildcard, wildcard, wildcard);
+  }
+
+  const whereStr = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
+
+  // Get total count
+  const countQuery = `
+    SELECT COUNT(*) as count 
+    FROM ticket t
+    ${whereStr}
+  `;
+  const [countRows] = await pool.query<RowDataPacket[]>(countQuery, params);
+  const total = countRows[0]?.count || 0;
+
+  // Get paginated data
+  const selectQuery = `
+    SELECT t.*,
+           u.nombre_completo as tecnico_nombre,
+           e.nombre as empresa_nombre,
+           JSON_UNQUOTE(t.bitacora_dinamica) as bitacora_dinamica
+    FROM ticket t
+    LEFT JOIN usuario u ON t.tecnico_id = u.id
+    LEFT JOIN empresa e ON t.empresa_id = e.id
+    ${whereStr}
+    ORDER BY t.created_at DESC
+    LIMIT ? OFFSET ?
+  `;
+  const selectParams = [...params, limit, skip];
+  const [dataRows] = await pool.query<RowDataPacket[]>(selectQuery, selectParams);
+
+  const data = dataRows.map(r => ({
+    ...r,
+    bitacora_dinamica: typeof r.bitacora_dinamica === 'string'
+      ? JSON.parse(r.bitacora_dinamica)
+      : r.bitacora_dinamica || []
+  }));
+
+  return {
+    total,
+    page,
+    limit,
+    data
+  };
+};
+

@@ -1,5 +1,7 @@
 import mysql from 'mysql2/promise';
 import { config } from '../core/config';
+import { initializeE2EE } from './e2ee';
+// Trigger reload for E2EE wipe - Reset 3
 
 // Create a connection pool using individual configurations
 export const pool = mysql.createPool({
@@ -238,7 +240,84 @@ async function initDbSchema() {
       `);
     }
 
+    // Create usuario_empresa_inventario table
+    console.log('Checking/creating usuario_empresa_inventario table...');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS usuario_empresa_inventario (
+        usuario_id INT NOT NULL,
+        empresa_id INT NOT NULL,
+        PRIMARY KEY (usuario_id, empresa_id),
+        FOREIGN KEY (usuario_id) REFERENCES usuario(id) ON DELETE CASCADE,
+        FOREIGN KEY (empresa_id) REFERENCES empresa(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB;
+    `);
+
+    // Pre-populate usuario_empresa_inventario with current usuario_empresa if empty
+    const [invCount] = await pool.query<any[]>(`SELECT COUNT(*) as count FROM usuario_empresa_inventario`);
+    if (invCount[0] && invCount[0].count === 0) {
+      console.log('Pre-populating usuario_empresa_inventario from usuario_empresa...');
+      await pool.query(`
+        INSERT INTO usuario_empresa_inventario (usuario_id, empresa_id)
+        SELECT usuario_id, empresa_id FROM usuario_empresa
+      `);
+    }
+
+    // 6. Create entrega_credencial table
+    console.log('Checking/creating entrega_credencial table...');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS entrega_credencial (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        secuencial VARCHAR(50) NOT NULL UNIQUE,
+        empresa_id INT NOT NULL,
+        fecha_entrega DATE NOT NULL,
+        tipo VARCHAR(50) NOT NULL DEFAULT 'Usuario y Clave',
+        sitio VARCHAR(255) NOT NULL,
+        usuario VARCHAR(150) NOT NULL,
+        clave VARCHAR(150) NOT NULL,
+        entregado_por_id INT NOT NULL,
+        recibido_por_nombre VARCHAR(150) NOT NULL,
+        recibido_por_area VARCHAR(100) NOT NULL,
+        correo_receptor VARCHAR(150) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT fk_entrega_cred_empresa FOREIGN KEY (empresa_id) REFERENCES empresa(id) ON DELETE CASCADE,
+        CONSTRAINT fk_entrega_cred_usuario FOREIGN KEY (entregado_por_id) REFERENCES usuario(id)
+      ) ENGINE=InnoDB;
+    `);
+
+    // Check and add correo_receptor column to entrega_credencial if missing
+    const [colsEntrega] = await pool.query<any[]>(`SHOW COLUMNS FROM entrega_credencial`);
+    const entregaColNames = colsEntrega.map((c: any) => c.Field);
+    if (!entregaColNames.includes('correo_receptor')) {
+      console.log('Adding correo_receptor column to entrega_credencial table...');
+      await pool.query(`ALTER TABLE entrega_credencial ADD COLUMN correo_receptor VARCHAR(150) NULL`);
+    }
+
+    // Purge old chat messages for E2EE
+    console.log('Purging old plaintext chat messages for E2EE...');
+    await pool.query(`DELETE FROM chat_mensaje`);
+
+    // Check and add public_key and encrypted_private_key columns to usuario if missing
+    const [colsUsuario] = await pool.query<any[]>(`SHOW COLUMNS FROM usuario`);
+    const usuarioColNames = colsUsuario.map((c: any) => c.Field);
+    if (!usuarioColNames.includes('public_key')) {
+      console.log('Adding public_key column to usuario table...');
+      await pool.query(`ALTER TABLE usuario ADD COLUMN public_key TEXT NULL`);
+    }
+    if (!usuarioColNames.includes('encrypted_private_key')) {
+      console.log('Adding encrypted_private_key column to usuario table...');
+      await pool.query(`ALTER TABLE usuario ADD COLUMN encrypted_private_key TEXT NULL`);
+    }
+
+    // Check and add encrypted_channel_key column to chat_canal_miembro if missing
+    const [colsMiembro] = await pool.query<any[]>(`SHOW COLUMNS FROM chat_canal_miembro`);
+    const miembroColNames = colsMiembro.map((c: any) => c.Field);
+    if (!miembroColNames.includes('encrypted_channel_key')) {
+      console.log('Adding encrypted_channel_key column to chat_canal_miembro table...');
+      await pool.query(`ALTER TABLE chat_canal_miembro ADD COLUMN encrypted_channel_key TEXT NULL`);
+    }
+
     console.log('Database schema initialization completed.');
+    await initializeE2EE();
   } catch (error) {
     console.error('Error running auto migrations:', error);
   }

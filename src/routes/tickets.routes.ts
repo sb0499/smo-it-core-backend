@@ -23,6 +23,7 @@ export const ticketsRouter = Router();
  *         description: Lista de tickets
  */
 ticketsRouter.get('/', requireAuth, ctrl.getTickets);
+ticketsRouter.get('/paginated', requireAuth, ctrl.getTicketsPaginated);
 
 /**
  * @openapi
