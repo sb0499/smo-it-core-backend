@@ -32,6 +32,16 @@ pool.getConnection()
 
 async function initDbSchema() {
   try {
+    // Ensure default roles exist
+    await pool.query(`
+      INSERT INTO rol (id, nombre, descripcion) VALUES
+      (1, 'ADMIN', 'Rol de ADMIN'),
+      (2, 'TECNICO', 'Rol de TECNICO'),
+      (3, 'USUARIO', 'Rol de USUARIO'),
+      (4, 'SUPERVISOR', 'Rol de SUPERVISOR')
+      ON DUPLICATE KEY UPDATE nombre=nombre
+    `);
+
     // 1. Create tipo_equipo table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS tipo_equipo (

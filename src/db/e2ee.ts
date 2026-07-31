@@ -94,6 +94,45 @@ export async function syncMemberChannelKey(canalId: number, targetUsuarioId: num
   }
 }
 
+export async function generateKeysForUser(userId: number, email: string) {
+  const serverSecret = config.JWT_SECRET || 'default-secret-key-smo-it-core';
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
+    modulusLength: 2048
+  });
+  const pubJwk = publicKey.export({ format: 'jwk' });
+  const privJwk = privateKey.export({ format: 'jwk' });
+
+  const pubString = JSON.stringify(pubJwk);
+  const privString = JSON.stringify(privJwk);
+
+  const encPrivKey = encryptWithServerSecret(privString, serverSecret);
+
+  await pool.query(
+    'UPDATE usuario SET public_key = ?, encrypted_private_key = ? WHERE id = ?',
+    [pubString, encPrivKey, userId]
+  );
+  console.log(`Generated E2EE keys for user: ${email} (ID: ${userId})`);
+
+  // Auto-join this user to all public channels
+  const [publicChannels] = await pool.query<RowDataPacket[]>(
+    'SELECT id FROM chat_canal WHERE is_private = FALSE'
+  );
+  for (const canal of publicChannels) {
+    const [existingMember] = await pool.query<RowDataPacket[]>(
+      'SELECT * FROM chat_canal_miembro WHERE canal_id = ? AND usuario_id = ?',
+      [canal.id, userId]
+    );
+    if (existingMember.length === 0) {
+      await pool.query(
+        'INSERT INTO chat_canal_miembro (canal_id, usuario_id) VALUES (?, ?)',
+        [canal.id, userId]
+      );
+    }
+    // Sync keys for this channel member
+    await syncMemberChannelKey(canal.id, userId);
+  }
+}
+
 export async function initializeE2EE() {
   const serverSecret = config.JWT_SECRET || 'default-secret-key-smo-it-core';
   

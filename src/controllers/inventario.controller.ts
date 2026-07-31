@@ -22,7 +22,7 @@ export const getActivos = async (req: AuthRequest, res: Response): Promise<void>
     const estado = (req.query.estado as string) || '';
     
     let empresaIds: number[] | undefined = undefined;
-    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO' && req.currentUser.nivel_soporte === 'N1') {
+    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
       empresaIds = await getAssignedEmpresas(req.currentUser.id);
     }
 
@@ -49,7 +49,7 @@ export const autogenerarCodigo = async (req: AuthRequest, res: Response): Promis
 };
 
 export const createActivo = async (req: AuthRequest, res: Response): Promise<void> => {
-  const activo = await inventarioService.createActivo(req.body);
+  const activo = await inventarioService.createActivo(req.body, req.currentUser?.id);
   res.status(201).json(activo);
 };
 
@@ -127,7 +127,7 @@ export const getMovimientosGlobal = async (req: AuthRequest, res: Response): Pro
     const limit = parseInt(req.query.limit as string) || 100;
 
     let empresaIds: number[] | undefined = undefined;
-    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO' && req.currentUser.nivel_soporte === 'N1') {
+    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
       empresaIds = await getAssignedEmpresas(req.currentUser.id);
     }
 
@@ -154,7 +154,7 @@ export const importarInventario = async (req: AuthRequest, res: Response): Promi
     }
 
     let empresaIds: number[] = [];
-    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO' && req.currentUser.nivel_soporte === 'N1') {
+    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
       empresaIds = await getAssignedEmpresas(req.currentUser.id);
     }
 
@@ -195,7 +195,7 @@ export const importarInventario = async (req: AuthRequest, res: Response): Promi
 export const exportarInventario = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     let empresaIds: number[] = [];
-    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO' && req.currentUser.nivel_soporte === 'N1') {
+    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
       empresaIds = await getAssignedEmpresas(req.currentUser.id);
     }
 
@@ -239,7 +239,7 @@ export const updateActivo = async (req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
-    if (req.currentUser.rol_nombre === 'TECNICO' && req.currentUser.nivel_soporte === 'N1') {
+    if (req.currentUser.rol_nombre === 'TECNICO') {
       const assigned = await getAssignedEmpresas(req.currentUser.id);
       const [existing] = await pool.query<any[]>('SELECT empresa_id FROM activo WHERE id = ?', [activoId]);
       if (existing.length === 0) {

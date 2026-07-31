@@ -19,7 +19,7 @@ export interface SoporteRecurrente {
   created_at?: string;
 }
 
-export const getSoportesRecurrentes = async (page = 1, limit = 10, search = '') => {
+export const getSoportesRecurrentes = async (currentUser: any, page = 1, limit = 10, search = '') => {
   const skip = (page - 1) * limit;
   let whereClauses: string[] = [];
   const params: any[] = [];
@@ -28,6 +28,11 @@ export const getSoportesRecurrentes = async (page = 1, limit = 10, search = '') 
     whereClauses.push('(sr.titulo LIKE ? OR sr.descripcion LIKE ? OR sr.categoria LIKE ?)');
     const wildcard = `%${search}%`;
     params.push(wildcard, wildcard, wildcard);
+  }
+
+  if (currentUser && currentUser.rol_nombre === 'TECNICO' && currentUser.nivel_soporte === 'N1') {
+    whereClauses.push(`sr.empresa_id IN (SELECT empresa_id FROM usuario_empresa WHERE usuario_id = ?)`);
+    params.push(currentUser.id);
   }
 
   const whereStr = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';

@@ -278,20 +278,42 @@ export const getProyectoById = async (id: number, currentUser: any) => {
       [t.id]
     );
 
+    const [tComentarios] = await pool.query<RowDataPacket[]>(
+      `SELECT c.*, u.nombre_completo as autor_nombre
+       FROM proyecto_comentario c
+       JOIN usuario u ON c.autor_id = u.id
+       WHERE c.tarea_id = ? AND c.subtarea_id IS NULL
+       ORDER BY c.created_at ASC`,
+      [t.id]
+    );
+
+    const mappedSubtareas = [];
+    for (const s of subtareas) {
+      const [sComentarios] = await pool.query<RowDataPacket[]>(
+        `SELECT c.*, u.nombre_completo as autor_nombre
+         FROM proyecto_comentario c
+         JOIN usuario u ON c.autor_id = u.id
+         WHERE c.subtarea_id = ?
+         ORDER BY c.created_at ASC`,
+        [s.id]
+      );
+      const subSem = calcularSemaforo(s.fecha_fin, s.estado);
+      mappedSubtareas.push({
+        ...s,
+        semaforo: subSem.semaforo,
+        tiempo_restante: subSem.tiempo_restante,
+        comentarios: sComentarios
+      });
+    }
+
     const semInfo = calcularSemaforo(t.fecha_fin, t.estado);
 
     tareasConSubtareas.push({
       ...t,
       semaforo: semInfo.semaforo,
       tiempo_restante: semInfo.tiempo_restante,
-      subtareas: subtareas.map((s) => {
-        const subSem = calcularSemaforo(s.fecha_fin, s.estado);
-        return {
-          ...s,
-          semaforo: subSem.semaforo,
-          tiempo_restante: subSem.tiempo_restante
-        };
-      })
+      comentarios: tComentarios,
+      subtareas: mappedSubtareas
     });
   }
 
@@ -356,7 +378,7 @@ export const updateProyecto = async (id: number, data: { nombre?: string; descri
   const proj = existing[0];
 
   // Permiso: creador o admin
-  const isAdmin = currentUser.rol_nombre === 'ADMIN';
+  const isAdmin = currentUser.rol_nombre === 'ADMIN' || currentUser.rol_nombre === 'SUPERVISOR';
   const isCreator = proj.creador_id === currentUser.id;
   if (!isAdmin && !isCreator) {
     throw new Error('403: No tienes permisos para modificar este proyecto.');
@@ -390,7 +412,7 @@ export const deleteProyecto = async (id: number, currentUser: any) => {
   if (existing.length === 0) return false;
   const proj = existing[0];
 
-  const isAdmin = currentUser.rol_nombre === 'ADMIN';
+  const isAdmin = currentUser.rol_nombre === 'ADMIN' || currentUser.rol_nombre === 'SUPERVISOR';
   const isCreator = proj.creador_id === currentUser.id;
   if (!isAdmin && !isCreator) {
     throw new Error('403: No tienes permisos para eliminar este proyecto.');
@@ -423,10 +445,12 @@ export const createTarea = async (data: { proyecto_id: number; titulo: string; d
   if (projRow.length === 0) return null;
   const proj = projRow[0];
 
-  const isAdmin = currentUser.rol_nombre === 'ADMIN';
+  const isAdmin = currentUser.rol_nombre === 'ADMIN' || currentUser.rol_nombre === 'SUPERVISOR';
   const isCreator = proj.creador_id === currentUser.id;
-  if (!isAdmin && !isCreator) {
-    throw new Error('403: Solo el creador o el administrador pueden agregar tareas.');
+  const miembrosArr = proj.miembros ? JSON.parse(proj.miembros) : [];
+  const isMember = Array.isArray(miembrosArr) && miembrosArr.includes(currentUser.id);
+  if (!isAdmin && !isCreator && !isMember) {
+    throw new Error('403: Solo los miembros asignados al proyecto, el creador o el administrador pueden agregar tareas.');
   }
 
   // Validación de fecha límite de la Tarea respecto al Proyecto
@@ -463,7 +487,7 @@ export const updateTarea = async (id: number, data: { titulo?: string; descripci
   const [projRow] = await pool.query<RowDataPacket[]>(`SELECT * FROM proyecto WHERE id = ?`, [tarea.proyecto_id]);
   const proj = projRow[0];
 
-  const isAdmin = currentUser.rol_nombre === 'ADMIN';
+  const isAdmin = currentUser.rol_nombre === 'ADMIN' || currentUser.rol_nombre === 'SUPERVISOR';
   const isCreator = proj.creador_id === currentUser.id;
   const isResponsible = tarea.responsable_id === currentUser.id;
 
@@ -523,7 +547,7 @@ export const deleteTarea = async (id: number, currentUser: any) => {
   const [projRow] = await pool.query<RowDataPacket[]>(`SELECT * FROM proyecto WHERE id = ?`, [tarea.proyecto_id]);
   const proj = projRow[0];
 
-  const isAdmin = currentUser.rol_nombre === 'ADMIN';
+  const isAdmin = currentUser.rol_nombre === 'ADMIN' || currentUser.rol_nombre === 'SUPERVISOR';
   const isCreator = proj.creador_id === currentUser.id;
   if (!isAdmin && !isCreator) {
     throw new Error('403: No tienes permisos para eliminar esta tarea.');
@@ -559,10 +583,13 @@ export const createSubtarea = async (data: { tarea_id: number; titulo: string; d
   const [projRow] = await pool.query<RowDataPacket[]>(`SELECT * FROM proyecto WHERE id = ?`, [tarea.proyecto_id]);
   const proj = projRow[0];
 
-  const isAdmin = currentUser.rol_nombre === 'ADMIN';
+  const isAdmin = currentUser.rol_nombre === 'ADMIN' || currentUser.rol_nombre === 'SUPERVISOR';
   const isCreator = proj.creador_id === currentUser.id;
-  if (!isAdmin && !isCreator) {
-    throw new Error('403: Solo el creador o el administrador pueden agregar subtareas.');
+  const miembrosArr = proj.miembros ? JSON.parse(proj.miembros) : [];
+  const isMember = Array.isArray(miembrosArr) && miembrosArr.includes(currentUser.id);
+  const isTaskResponsible = tarea.responsable_id === currentUser.id;
+  if (!isAdmin && !isCreator && !isMember && !isTaskResponsible) {
+    throw new Error('403: Solo los miembros asignados al proyecto, el creador, el administrador o el responsable de la tarea pueden agregar subtareas.');
   }
 
   // Validación: Subtarea fecha_fin <= Tarea fecha_fin
@@ -602,7 +629,7 @@ export const updateSubtarea = async (id: number, data: { titulo?: string; descri
   const [projRow] = await pool.query<RowDataPacket[]>(`SELECT * FROM proyecto WHERE id = ?`, [tarea.proyecto_id]);
   const proj = projRow[0];
 
-  const isAdmin = currentUser.rol_nombre === 'ADMIN';
+  const isAdmin = currentUser.rol_nombre === 'ADMIN' || currentUser.rol_nombre === 'SUPERVISOR';
   const isCreator = proj.creador_id === currentUser.id;
   const isResponsible = sub.responsable_id === currentUser.id;
 
@@ -659,7 +686,7 @@ export const deleteSubtarea = async (id: number, currentUser: any) => {
   const [projRow] = await pool.query<RowDataPacket[]>(`SELECT * FROM proyecto WHERE id = ?`, [tarea.proyecto_id]);
   const proj = projRow[0];
 
-  const isAdmin = currentUser.rol_nombre === 'ADMIN';
+  const isAdmin = currentUser.rol_nombre === 'ADMIN' || currentUser.rol_nombre === 'SUPERVISOR';
   const isCreator = proj.creador_id === currentUser.id;
   if (!isAdmin && !isCreator) {
     throw new Error('403: No tienes permisos para eliminar esta subtarea.');
@@ -743,6 +770,46 @@ export const addComentario = async (data: { autor_id: number; proyecto_id?: numb
       [data.subtarea_id]
     );
     if (sRow.length > 0) projId = sRow[0].proyecto_id;
+  }
+
+  // Permission checks: "comentarios de quien creo la tarea o subtarea y comentarios de a quien fue asignada"
+  if (data.tarea_id) {
+    const [tRow] = await pool.query<RowDataPacket[]>(
+      `SELECT t.responsable_id, p.creador_id 
+       FROM tarea_proyecto t 
+       JOIN proyecto p ON t.proyecto_id = p.id 
+       WHERE t.id = ?`,
+      [data.tarea_id]
+    );
+    if (tRow.length > 0) {
+      const task = tRow[0];
+      const isCreator = task.creador_id === data.autor_id;
+      const isResponsible = task.responsable_id === data.autor_id;
+      const [userRow] = await pool.query<RowDataPacket[]>(`SELECT r.nombre as rol_nombre FROM usuario u JOIN rol r ON u.rol_id = r.id WHERE u.id = ?`, [data.autor_id]);
+      const isAdmin = userRow[0]?.rol_nombre === 'ADMIN' || userRow[0]?.rol_nombre === 'SUPERVISOR';
+      if (!isCreator && !isResponsible && !isAdmin) {
+        throw new Error('403: Solo el creador de la tarea o el responsable asignado pueden agregar comentarios.');
+      }
+    }
+  } else if (data.subtarea_id) {
+    const [sRow] = await pool.query<RowDataPacket[]>(
+      `SELECT s.responsable_id, p.creador_id 
+       FROM subtarea_proyecto s 
+       JOIN tarea_proyecto t ON s.tarea_id = t.id 
+       JOIN proyecto p ON t.proyecto_id = p.id 
+       WHERE s.id = ?`,
+      [data.subtarea_id]
+    );
+    if (sRow.length > 0) {
+      const sub = sRow[0];
+      const isCreator = sub.creador_id === data.autor_id;
+      const isResponsible = sub.responsable_id === data.autor_id;
+      const [userRow] = await pool.query<RowDataPacket[]>(`SELECT r.nombre as rol_nombre FROM usuario u JOIN rol r ON u.rol_id = r.id WHERE u.id = ?`, [data.autor_id]);
+      const isAdmin = userRow[0]?.rol_nombre === 'ADMIN' || userRow[0]?.rol_nombre === 'SUPERVISOR';
+      if (!isCreator && !isResponsible && !isAdmin) {
+        throw new Error('403: Solo el creador de la subtarea o el responsable asignado pueden agregar comentarios.');
+      }
+    }
   }
 
   const [result] = await pool.query<ResultSetHeader>(
@@ -862,7 +929,7 @@ export const enviarReporteSemanalTecnicos = async () => {
     `SELECT u.id, u.email, u.nombre_completo 
      FROM usuario u
      JOIN rol r ON u.rol_id = r.id
-     WHERE r.nombre = 'TECNICO' AND u.is_active = TRUE`
+     WHERE r.nombre IN ('TECNICO', 'SUPERVISOR') AND u.is_active = TRUE`
   );
 
   for (const tech of tecnicos) {
@@ -928,14 +995,14 @@ export const enviarReporteSemanalAdmin = async () => {
     `SELECT u.id, u.email 
      FROM usuario u 
      JOIN rol r ON u.rol_id = r.id 
-     WHERE r.nombre = 'ADMIN' AND u.is_active = TRUE`
+     WHERE r.nombre IN ('ADMIN', 'SUPERVISOR') AND u.is_active = TRUE`
   );
 
   const [tecnicos] = await pool.query<RowDataPacket[]>(
     `SELECT u.id, u.nombre_completo 
      FROM usuario u
      JOIN rol r ON u.rol_id = r.id
-     WHERE r.nombre = 'TECNICO' AND u.is_active = TRUE`
+     WHERE r.nombre IN ('TECNICO', 'SUPERVISOR') AND u.is_active = TRUE`
   );
 
   let techReportHtml = '';

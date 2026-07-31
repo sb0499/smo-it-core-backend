@@ -12,7 +12,7 @@ export const getConsumibles = async (req: AuthRequest, res: Response): Promise<v
     const criticalOnly = req.query.criticalOnly === 'true';
 
     let empresaIds: number[] | undefined = undefined;
-    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO' && req.currentUser.nivel_soporte === 'N1') {
+    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
       const [rows] = await pool.query<any[]>(
         'SELECT empresa_id FROM usuario_empresa_inventario WHERE usuario_id = ?',
         [req.currentUser.id]

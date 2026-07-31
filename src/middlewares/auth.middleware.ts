@@ -73,5 +73,5 @@ export const requireRoles = (roles: string[]) => {
   };
 };
 
-export const requireAdmin = requireRoles(['ADMIN']);
-export const requireAdminOrTecnico = requireRoles(['ADMIN', 'TECNICO']);
+export const requireAdmin = requireRoles(['ADMIN', 'SUPERVISOR']);
+export const requireAdminOrTecnico = requireRoles(['ADMIN', 'SUPERVISOR', 'TECNICO']);

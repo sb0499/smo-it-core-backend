@@ -317,7 +317,8 @@ CREATE TABLE IF NOT EXISTS soporte_recurrente (
 INSERT INTO rol (id, nombre, descripcion) VALUES
 (1, 'ADMIN', 'Rol de ADMIN'),
 (2, 'TECNICO', 'Rol de TECNICO'),
-(3, 'USUARIO', 'Rol de USUARIO')
+(3, 'USUARIO', 'Rol de USUARIO'),
+(4, 'SUPERVISOR', 'Rol de SUPERVISOR')
 ON DUPLICATE KEY UPDATE nombre=nombre;
 
 -- Insertar empresas/sedes

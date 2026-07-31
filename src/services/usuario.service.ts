@@ -1,6 +1,7 @@
 import { pool } from '../db/connection';
 import { getPasswordHash } from '../utils/password';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { generateKeysForUser } from '../db/e2ee';
 
 export const getUsuarios = async (skip = 0, limit = 100) => {
   const [rows] = await pool.query<RowDataPacket[]>(
@@ -78,6 +79,11 @@ export const createUsuario = async (data: {
       }
     }
     await conn.commit();
+    try {
+      await generateKeysForUser(userId, data.email);
+    } catch (keyErr) {
+      console.error(`Failed to generate E2EE keys for new user ${data.email}:`, keyErr);
+    }
     return getUsuarioById(userId);
   } catch (e) {
     await conn.rollback();

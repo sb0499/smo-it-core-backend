@@ -34,7 +34,7 @@ export const updateUsuario = async (req: AuthRequest, res: Response): Promise<vo
 export const updateUsuarioKeys = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = parseInt(req.params.user_id);
-    if (req.currentUser && req.currentUser.rol_nombre !== 'ADMIN' && req.currentUser.id !== userId) {
+    if (req.currentUser && req.currentUser.rol_nombre !== 'ADMIN' && req.currentUser.rol_nombre !== 'SUPERVISOR' && req.currentUser.id !== userId) {
       res.status(403).json({ detail: 'No tienes permiso para actualizar las llaves de este usuario.' });
       return;
     }

@@ -4,6 +4,8 @@ import * as usuarioService from '../services/usuario.service';
 import { createAccessToken } from '../utils/jwt';
 import { verifyPassword } from '../utils/password';
 import { AuthRequest } from '../middlewares/auth.middleware';
+import { pool } from '../db/connection';
+import { generateKeysForUser } from '../db/e2ee';
 
 export const login = async (req: Request, res: Response): Promise<void> => {
   const { username, password } = req.body;
@@ -20,6 +22,27 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     res.status(400).json({ detail: 'Usuario inactivo' });
     return;
   }
+
+  // Generate E2EE keys on login if they are missing
+  if (!user.public_key || !user.encrypted_private_key) {
+    try {
+      await generateKeysForUser(user.id, user.email);
+    } catch (keyErr) {
+      console.error(`Failed to dynamically generate E2EE keys on login for ${user.email}:`, keyErr);
+    }
+  }
+
+  let hasInventoryAccess = false;
+  if (user.rol_nombre === 'ADMIN' || user.rol_nombre === 'SUPERVISOR') {
+    hasInventoryAccess = true;
+  } else if (user.rol_nombre === 'TECNICO') {
+    const [invRows] = await pool.query<any[]>(
+      'SELECT COUNT(*) as count FROM usuario_empresa_inventario WHERE usuario_id = ?',
+      [user.id]
+    );
+    hasInventoryAccess = invRows[0]?.count > 0;
+  }
+
   const token = createAccessToken({
     sub: String(user.id),
     id: user.id,
@@ -33,7 +56,8 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     user_id: user.id,
     rol: user.rol_nombre,
     nombre: user.nombre_completo,
-    must_change_password: !!user.must_change_password
+    must_change_password: !!user.must_change_password,
+    has_inventory_access: hasInventoryAccess
   });
 };
 

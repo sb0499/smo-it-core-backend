@@ -8,7 +8,7 @@ export const getSoportesRecurrentes = async (req: AuthRequest, res: Response): P
     const limit = parseInt(req.query.limit as string) || 10;
     const search = (req.query.search as string) || '';
 
-    const result = await service.getSoportesRecurrentes(page, limit, search);
+    const result = await service.getSoportesRecurrentes(req.currentUser, page, limit, search);
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ detail: 'Error al obtener soportes recurrentes', error: err.message });

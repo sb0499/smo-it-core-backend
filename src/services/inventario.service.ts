@@ -113,11 +113,14 @@ export const generateUniqueCode = async (empresaId: number, tipoEquipoId: number
   return `${prefix}-${nextSeq}`;
 };
 
-export const createActivo = async (data: {
-  codigo?: string; serial: string; marca: string; modelo: string;
-  especificaciones?: string; persona_id?: number; proveedor_id?: number; fecha_compra?: string;
-  tipo_equipo_id?: number; empresa_id?: number; bodega_id?: number;
-}) => {
+export const createActivo = async (
+  data: {
+    codigo?: string; serial: string; marca: string; modelo: string;
+    especificaciones?: string; persona_id?: number; proveedor_id?: number; fecha_compra?: string;
+    tipo_equipo_id?: number; empresa_id?: number; bodega_id?: number;
+  },
+  usuarioId?: number
+) => {
   let finalCodigo = data.codigo || '';
   if (data.empresa_id && data.tipo_equipo_id && !finalCodigo) {
     finalCodigo = await generateUniqueCode(data.empresa_id, data.tipo_equipo_id);
@@ -132,6 +135,13 @@ export const createActivo = async (data: {
     [finalCodigo, data.serial, data.marca, data.modelo,
      data.especificaciones || null, estado, data.persona_id || null, data.proveedor_id || null, data.fecha_compra || null, data.tipo_equipo_id || null, data.empresa_id || null, data.bodega_id || null]
   );
+  
+  if (usuarioId) {
+    await pool.query(
+      `INSERT INTO historial_cambios_activo (activo_id, usuario_id, cambios) VALUES (?, ?, ?)`,
+      [result.insertId, usuarioId, 'Activo creado / registrado en el sistema']
+    );
+  }
   
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT a.*, p.nombre as persona_nombre, p.cedula as persona_cedula,

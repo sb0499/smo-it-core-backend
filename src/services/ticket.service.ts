@@ -42,8 +42,19 @@ export const createTicket = async (data: any, currentUser: any) => {
   const diaSemana = ahora.getDay(); // 0=Dom, 6=Sab
 
   if (currentUser.rol_nombre === 'TECNICO') {
-    tecnicoAsignado = currentUser.id;
-  } else if (currentUser.rol_nombre === 'ADMIN' && data.tecnico_id) {
+    let isAssignedToCompany = true;
+    if (data.empresa_id) {
+      const [assignedRows] = await pool.query<RowDataPacket[]>(
+        `SELECT 1 FROM usuario_empresa WHERE usuario_id = ? AND empresa_id = ?`,
+        [currentUser.id, data.empresa_id]
+      );
+      isAssignedToCompany = assignedRows.length > 0;
+    }
+
+    if (isAssignedToCompany && !(currentUser.nivel_soporte === 'N2' && data.nivel_soporte !== 'N2')) {
+      tecnicoAsignado = currentUser.id;
+    }
+  } else if ((currentUser.rol_nombre === 'ADMIN' || currentUser.rol_nombre === 'SUPERVISOR') && data.tecnico_id) {
     tecnicoAsignado = data.tecnico_id;
   } else {
     // Verificar si es una sede con calendario especial (Gametown, El Teatro, Apparca)
@@ -73,7 +84,7 @@ export const createTicket = async (data: any, currentUser: any) => {
            FROM usuario u
            JOIN usuario_empresa ue ON u.id = ue.usuario_id
            JOIN rol r ON u.rol_id = r.id
-           WHERE ue.empresa_id = ? AND r.nombre = 'TECNICO' ${techNivelFilter} AND u.is_active = 1`,
+           WHERE ue.empresa_id = ? AND r.nombre IN ('TECNICO', 'SUPERVISOR') ${techNivelFilter} AND u.is_active = 1`,
           [data.empresa_id]
         );
         if (techRows.length > 0) {
@@ -105,7 +116,7 @@ export const createTicket = async (data: any, currentUser: any) => {
            FROM usuario u
            JOIN rol r ON u.rol_id = r.id
            LEFT JOIN ticket t ON u.id = t.tecnico_id AND t.estado IN ('Nuevo', 'Pendiente')
-           WHERE r.nombre = 'TECNICO' ${fallbackNivelFilter} AND u.is_active = 1
+           WHERE r.nombre IN ('TECNICO', 'SUPERVISOR') ${fallbackNivelFilter} AND u.is_active = 1
            GROUP BY u.id
            ORDER BY total_tickets ASC
            LIMIT 1`
@@ -131,7 +142,7 @@ export const createTicket = async (data: any, currentUser: any) => {
            FROM usuario u
            JOIN rol r ON u.rol_id = r.id
            LEFT JOIN ticket t ON u.id = t.tecnico_id AND t.estado IN ('Nuevo', 'Pendiente')
-           WHERE r.nombre = 'TECNICO' ${fallbackNivelFilter} AND u.is_active = 1
+           WHERE r.nombre IN ('TECNICO', 'SUPERVISOR') ${fallbackNivelFilter} AND u.is_active = 1
            GROUP BY u.id
            ORDER BY total_tickets ASC
            LIMIT 1`
@@ -204,9 +215,9 @@ export const createTicket = async (data: any, currentUser: any) => {
       `Tu solicitud de soporte "${data.titulo}" fue registrada y está en cola.`
     ).catch(console.error);
 
-    // Notify all admin users internally
+    // Notify all admin/supervisor users internally
     pool.query<RowDataPacket[]>(
-      `SELECT u.id FROM usuario u JOIN rol r ON u.rol_id = r.id WHERE r.nombre = 'ADMIN'`
+      `SELECT u.id FROM usuario u JOIN rol r ON u.rol_id = r.id WHERE r.nombre IN ('ADMIN', 'SUPERVISOR')`
     ).then(([adminRows]) => {
       adminRows.forEach(adm => {
         crearNotificacion(
@@ -217,9 +228,9 @@ export const createTicket = async (data: any, currentUser: any) => {
       });
     }).catch(console.error);
   } else {
-    // Notify all admin users internally
+    // Notify all admin/supervisor users internally
     pool.query<RowDataPacket[]>(
-      `SELECT u.id FROM usuario u JOIN rol r ON u.rol_id = r.id WHERE r.nombre = 'ADMIN'`
+      `SELECT u.id FROM usuario u JOIN rol r ON u.rol_id = r.id WHERE r.nombre IN ('ADMIN', 'SUPERVISOR')`
     ).then(([adminRows]) => {
       adminRows.forEach(adm => {
         if (adm.id !== currentUser.id) { // Avoid notifying self
@@ -273,7 +284,7 @@ export const updateTicket = async (ticketId: number, data: any, currentUser?: an
       data.estado === 'Escalado a Proyecto' || 
       data.estado === 'Escalado a Proveedor'
     ) {
-      if (currentUser.rol_nombre !== 'ADMIN' && currentUser.nivel_soporte !== 'N2') {
+      if (currentUser.rol_nombre !== 'ADMIN' && currentUser.rol_nombre !== 'SUPERVISOR' && currentUser.nivel_soporte !== 'N2') {
         throw new Error('Solo el personal de Nivel 2 o Administradores pueden elevar un soporte a Nivel 3 o a Proyecto.');
       }
     }
@@ -407,14 +418,31 @@ export const escalarTicketAN2 = async (
   if (existing.length === 0) return null;
   const ticket = existing[0];
 
-  // Cargar técnicos activos N2 de ese grupo específico
-  const [techRows] = await pool.query<RowDataPacket[]>(
-    `SELECT u.id, u.nombre_completo, u.email 
-     FROM usuario u
-     JOIN rol r ON u.rol_id = r.id
-     WHERE r.nombre = 'TECNICO' AND u.nivel_soporte = 'N2' AND u.grupo_n2 = ? AND u.is_active = 1`,
-    [grupo_n2]
-  );
+  // Cargar técnicos activos N2 de ese grupo específico y asignados a la empresa del ticket
+  let techRows: RowDataPacket[] = [];
+  if (ticket.empresa_id) {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT u.id, u.nombre_completo, u.email 
+       FROM usuario u
+       JOIN rol r ON u.rol_id = r.id
+       JOIN usuario_empresa ue ON u.id = ue.usuario_id
+       WHERE r.nombre = 'TECNICO' AND u.nivel_soporte = 'N2' AND u.grupo_n2 = ? AND u.is_active = 1 AND ue.empresa_id = ?`,
+      [grupo_n2, ticket.empresa_id]
+    );
+    techRows = rows;
+  }
+
+  // Fallback: cargar todos los técnicos activos N2 de ese grupo
+  if (techRows.length === 0) {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT u.id, u.nombre_completo, u.email 
+       FROM usuario u
+       JOIN rol r ON u.rol_id = r.id
+       WHERE r.nombre = 'TECNICO' AND u.nivel_soporte = 'N2' AND u.grupo_n2 = ? AND u.is_active = 1`,
+      [grupo_n2]
+    );
+    techRows = rows;
+  }
 
   let finalTecnicoId: number | null = null;
   let finalTecnicoNombre = 'Sin asignar';

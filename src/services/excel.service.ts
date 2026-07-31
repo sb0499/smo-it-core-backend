@@ -326,7 +326,7 @@ export const excelService = {
           // Generate unique sequential code
           const codigo = customCodigo || await generateUniqueCode(empresaId, tipoEquipoId);
 
-          await pool.query(
+          const [insertRes] = await pool.query<ResultSetHeader>(
             `INSERT INTO activo (
               codigo, serial, marca, modelo, especificaciones, estado, 
               persona_id, proveedor_id, fecha_compra, tipo_equipo_id, empresa_id,
@@ -351,6 +351,12 @@ export const excelService = {
               tipoInventarioId         // 16
             ]
           );
+
+          await pool.query(
+            `INSERT INTO historial_cambios_activo (activo_id, usuario_id, cambios) VALUES (?, ?, ?)`,
+            [insertRes.insertId, currentUser.id, 'Activo creado / registrado por importación Excel']
+          );
+
           result.totalInserted++;
         }
       } catch (err: any) {
@@ -372,7 +378,8 @@ export const excelService = {
     currentUser: { id: number; rol_nombre: string; nivel_soporte: string },
     assignedEmpresaIds: number[]
   ): Promise<ExcelJS.Workbook> {
-    const isN1 = currentUser.rol_nombre === 'TECNICO' && currentUser.nivel_soporte === 'N1';
+    const isTech = currentUser.rol_nombre === 'TECNICO';
+    const isN1 = isTech && currentUser.nivel_soporte === 'N1';
 
     // 1. Fetch assets based on user authorization
     let query = `
@@ -389,7 +396,7 @@ export const excelService = {
     `;
     
     const params: any[] = [];
-    if (isN1) {
+    if (isTech) {
       if (assignedEmpresaIds.length > 0) {
         query += ` WHERE a.empresa_id IN (${assignedEmpresaIds.map(() => '?').join(',')})`;
         params.push(...assignedEmpresaIds);

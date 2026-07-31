@@ -14,7 +14,7 @@ const getAssignedEmpresas = async (usuarioId: number): Promise<number[]> => {
 export const getBodegas = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     let empresaIds: number[] | undefined = undefined;
-    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO' && req.currentUser.nivel_soporte === 'N1') {
+    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
       const allowed = await getAssignedEmpresas(req.currentUser.id);
       if (req.query.empresa_id) {
         const sel = parseInt(req.query.empresa_id as string);
@@ -56,7 +56,7 @@ export const getBodegaById = async (req: AuthRequest, res: Response): Promise<vo
     }
 
     // N1 check
-    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO' && req.currentUser.nivel_soporte === 'N1') {
+    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
       const assigned = await getAssignedEmpresas(req.currentUser.id);
       if (!assigned.includes(bodega.empresa_id)) {
         res.status(403).json({ detail: 'No tienes autorización para acceder a esta bodega' });
@@ -79,7 +79,7 @@ export const createBodega = async (req: AuthRequest, res: Response): Promise<voi
 
   try {
     // N1 check
-    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO' && req.currentUser.nivel_soporte === 'N1') {
+    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
       const assigned = await getAssignedEmpresas(req.currentUser.id);
       if (!assigned.includes(Number(empresa_id))) {
         res.status(403).json({ detail: 'No tienes autorización para crear bodegas en esta sede' });
@@ -111,7 +111,7 @@ export const updateBodega = async (req: AuthRequest, res: Response): Promise<voi
     }
 
     // N1 check for original bodega
-    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO' && req.currentUser.nivel_soporte === 'N1') {
+    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
       const assigned = await getAssignedEmpresas(req.currentUser.id);
       if (!assigned.includes(existing.empresa_id)) {
         res.status(403).json({ detail: 'No tienes autorización para editar esta bodega' });
@@ -145,7 +145,7 @@ export const deleteBodega = async (req: AuthRequest, res: Response): Promise<voi
     }
 
     // N1 check
-    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO' && req.currentUser.nivel_soporte === 'N1') {
+    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
       const assigned = await getAssignedEmpresas(req.currentUser.id);
       if (!assigned.includes(existing.empresa_id)) {
         res.status(403).json({ detail: 'No tienes autorización para eliminar esta bodega' });
