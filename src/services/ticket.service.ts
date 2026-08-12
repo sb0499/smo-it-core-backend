@@ -595,10 +595,8 @@ export const enviarRecordatoriosCierreDiario = async () => {
 
 export const generarReporteSemanalExcel = async (rolUsuario: string, usuarioId: number): Promise<Buffer> => {
   let query = `
-    SELECT t.*, 
-           u.nombre_completo as tecnico_nombre, 
-           c.nombre_completo as creador_nombre,
-           JSON_UNQUOTE(t.bitacora_dinamica) as bitacora_parsed
+    SELECT t.id, t.titulo, t.estado, t.prioridad, t.created_at, t.updated_at,
+           c.nombre_completo as creador_nombre, u.nombre_completo as tecnico_nombre
     FROM ticket t 
     LEFT JOIN usuario u ON t.tecnico_id = u.id 
     LEFT JOIN usuario c ON t.creador_id = c.id
@@ -615,145 +613,50 @@ export const generarReporteSemanalExcel = async (rolUsuario: string, usuarioId: 
   const [tickets] = await pool.query<RowDataPacket[]>(query, params);
 
   const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet('Bitácora de Soportes');
+  const worksheet = workbook.addWorksheet('Reporte de Tickets');
 
   // Habilitar líneas de cuadrícula
   worksheet.views = [{ showGridLines: true }];
 
-  // 1. Título Superior (Banner Premium)
-  worksheet.mergeCells('A1:J1');
-  const titleCell = worksheet.getCell('A1');
-  titleCell.value = 'REPORTE DE BITÁCORAS DE SOPORTES REALIZADOS';
-  titleCell.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFF' } };
-  titleCell.fill = {
-    type: 'pattern',
-    pattern: 'solid',
-    fgColor: { argb: '1F4E79' }
-  };
-  titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
-  worksheet.getRow(1).height = 40;
-
-  // Subtítulo de Información
-  worksheet.mergeCells('A2:J2');
-  const subtitleCell = worksheet.getCell('A2');
-  subtitleCell.value = `Generado el: ${new Date().toLocaleString()} | Rol: ${rolUsuario} | Registros: ${tickets.length} tickets`;
-  subtitleCell.font = { name: 'Arial', size: 10, italic: true, color: { argb: '595959' } };
-  subtitleCell.alignment = { vertical: 'middle', horizontal: 'center' };
-  worksheet.getRow(2).height = 20;
-
-  // Celda en blanco de separación
-  worksheet.getRow(3).height = 15;
-
-  // Headers de la tabla
-  const headers = [
-    'ID Ticket', 'Título del Ticket', 'Categoría', 'Estado', 'Prioridad',
-    'Técnico Asignado', 'Creador', 'Acción Realizada', 'Fecha Acción', 'Responsable Acción'
+  worksheet.columns = [
+    { header: 'ID', key: 'id', width: 10 },
+    { header: 'Título', key: 'titulo', width: 40 },
+    { header: 'Estado', key: 'estado', width: 15 },
+    { header: 'Prioridad', key: 'prioridad', width: 15 },
+    { header: 'Fecha Creación', key: 'created_at', width: 20 },
+    { header: 'Fecha Actualización', key: 'updated_at', width: 20 },
+    { header: 'Creador', key: 'creador', width: 25 },
+    { header: 'Técnico', key: 'tecnico', width: 25 }
   ];
-  worksheet.getRow(4).values = headers;
-  worksheet.getRow(4).height = 28;
 
-  // Estilo de la Fila de Headers
-  const headerFont = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFF' } };
-  const headerFill: ExcelJS.Fill = {
-    type: 'pattern',
-    pattern: 'solid',
-    fgColor: { argb: '2E75B6' } // Azul Medio Corporativo
-  };
-  const centerAlign: Partial<ExcelJS.Alignment> = { vertical: 'middle', horizontal: 'center', wrapText: true };
-  const leftAlign: Partial<ExcelJS.Alignment> = { vertical: 'middle', horizontal: 'left', wrapText: true };
-
-  for (let col = 1; col <= 10; col++) {
-    const cell = worksheet.getCell(4, col);
-    cell.font = headerFont;
-    cell.fill = headerFill;
-    cell.alignment = centerAlign;
-    cell.border = {
-      top: { style: 'thin', color: { argb: 'BFBFBF' } },
-      bottom: { style: 'medium', color: { argb: '000000' } },
-      left: { style: 'thin', color: { argb: 'BFBFBF' } },
-      right: { style: 'thin', color: { argb: 'BFBFBF' } }
-    };
-  }
-
-  // Llenar datos y aplanar bitácora
-  let rowIdx = 5;
-  const borderThin: Partial<ExcelJS.Borders> = {
-    top: { style: 'thin', color: { argb: 'D9D9D9' } },
-    bottom: { style: 'thin', color: { argb: 'D9D9D9' } },
-    left: { style: 'thin', color: { argb: 'D9D9D9' } },
-    right: { style: 'thin', color: { argb: 'D9D9D9' } }
-  };
+  worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
 
   for (const t of tickets) {
-    let bitacoraEntries: any[] = [];
-    try {
-      bitacoraEntries = typeof t.bitacora_parsed === 'string'
-        ? JSON.parse(t.bitacora_parsed)
-        : t.bitacora_parsed || [];
-    } catch {
-      bitacoraEntries = [];
-    }
-
-    if (bitacoraEntries.length === 0) {
-      bitacoraEntries.push({
-        accion: 'Sin bitácora registrada / Creado',
-        fecha: t.created_at ? new Date(t.created_at).toISOString() : new Date().toISOString(),
-        usuario: t.creador_nombre || 'Sistema'
-      });
-    }
-
-    // Escribir fila para cada acción de bitácora
-    for (const entry of bitacoraEntries) {
-      const row = worksheet.getRow(rowIdx);
-      row.height = 22;
-
-      row.values = [
-        t.id,
-        t.titulo,
-        t.categoria,
-        t.estado,
-        t.prioridad,
-        t.tecnico_nombre || 'Sin asignar',
-        t.creador_nombre || 'N/A',
-        entry.accion || 'N/A',
-        entry.fecha ? new Date(entry.fecha).toLocaleString() : 'N/A',
-        entry.usuario || 'N/A'
-      ];
-
-      // Zebra striping y bordes
-      const fillArgb = rowIdx % 2 === 0 ? 'F9FBFD' : 'FFFFFF'; // Alternar entre blanco y azul extremadamente claro
-      const rowFill: ExcelJS.Fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillArgb } };
-
-      for (let col = 1; col <= 10; col++) {
-        const cell = row.getCell(col);
-        cell.fill = rowFill;
-        cell.border = borderThin;
-        cell.font = { name: 'Arial', size: 9 };
-
-        // Alineaciones
-        if ([1, 4, 5, 9].includes(col)) {
-          cell.alignment = centerAlign;
-        } else {
-          cell.alignment = leftAlign;
-        }
-      }
-      rowIdx++;
-    }
+    worksheet.addRow({
+      id: t.id,
+      titulo: t.titulo,
+      estado: t.estado,
+      prioridad: t.prioridad,
+      created_at: t.created_at ? new Date(t.created_at).toLocaleString() : '',
+      updated_at: t.updated_at ? new Date(t.updated_at).toLocaleString() : '',
+      creador: t.creador_nombre || 'N/A',
+      tecnico: t.tecnico_nombre || 'Sin asignar'
+    });
   }
 
   // Ajuste automático de anchos de columna con padding
   worksheet.columns.forEach((column) => {
     let maxLen = 0;
     column.eachCell!({ includeEmpty: false }, (cell, rowNum) => {
-      // Ignorar celdas del banner fusionado
-      if (rowNum > 2 && cell.value) {
+      if (cell.value) {
         const valueStr = cell.value.toString();
         if (valueStr.length > maxLen) {
           maxLen = valueStr.length;
         }
       }
     });
-    column.width = Math.min(Math.max(maxLen + 4, 12), 45); // Límites razonables para evitar columnas infinitas
+    column.width = Math.min(Math.max(maxLen + 4, 12), 45);
   });
 
   const buffer = await workbook.xlsx.writeBuffer() as unknown as Buffer;

@@ -55,30 +55,48 @@ export const excelService = {
     assignedEmpresaIds: number[],
     bodegaNombreOpcional?: string
   ): Promise<ImportResult> {
-    const [tipoInvRows] = await pool.query<RowDataPacket[]>(
-      'SELECT nombre FROM tipo_inventario WHERE id = ?',
-      [tipoInventarioId]
-    );
-    if (tipoInvRows.length === 0) {
-      throw new Error('Tipo de inventario no válido o no encontrado en la base de datos.');
-    }
-    const tipoInventarioNombre = tipoInvRows[0].nombre; 
-    const tipoInvLower = tipoInventarioNombre.toLowerCase();
-
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(filePath);
+
+    // Determine which worksheets to process
+    const worksheetsToProcess: { ws: ExcelJS.Worksheet; typeId: number }[] = [];
+    if (workbook.worksheets.length > 1) {
+      for (const ws of workbook.worksheets) {
+        const name = ws.name.toUpperCase().trim();
+        let targetTypeId = 0;
+        if (name === 'BODEGA') targetTypeId = 1;
+        else if (name === 'ASIGNADOS USUARIOS') targetTypeId = 2;
+        else if (name === 'SERVIDORES') targetTypeId = 3;
+        else if (name === 'CONSUMIBLES') targetTypeId = 4;
+        else if (name === 'RECICLAJE') targetTypeId = 5;
+
+        if (targetTypeId > 0) {
+          worksheetsToProcess.push({ ws, typeId: targetTypeId });
+        }
+      }
+    }
+
+    // Fallback to first sheet if no template sheet names matched
+    if (worksheetsToProcess.length === 0 && workbook.worksheets[0]) {
+      worksheetsToProcess.push({ ws: workbook.worksheets[0], typeId: tipoInventarioId });
+    }
+
+    if (worksheetsToProcess.length === 0) {
+      throw new Error('El archivo Excel no contiene hojas de cálculo.');
+    }
+
+    // Load all inventory types into a map in memory
+    const [tipoInvRows] = await pool.query<RowDataPacket[]>('SELECT id, nombre FROM tipo_inventario');
+    const tipoInvMap = new Map<number, string>();
+    for (const row of tipoInvRows) {
+      tipoInvMap.set(row.id, row.nombre);
+    }
 
     // Load all existing equipment types for memory matching (case and accent insensitive)
     const [allTipos] = await pool.query<RowDataPacket[]>('SELECT id, nombre FROM tipo_equipo');
     const tipoMap = new Map<string, number>();
     for (const t of allTipos) {
       tipoMap.set(normalizeHeader(t.nombre), t.id);
-    }
-
-    // Get the first worksheet
-    const worksheet = workbook.worksheets[0];
-    if (!worksheet) {
-      throw new Error('El archivo Excel no contiene hojas de cálculo.');
     }
 
     const result: ImportResult = {
@@ -88,284 +106,290 @@ export const excelService = {
       errors: []
     };
 
-    // 1. Map headers to column numbers
-    const headerRow = worksheet.getRow(1);
-    const colMap: { [key: string]: number } = {};
-
-    headerRow.eachCell((cell, colNumber) => {
-      const headerStr = getCellString(cell.value);
-      if (headerStr) {
-        const norm = normalizeHeader(headerStr);
-        colMap[norm] = colNumber;
-      }
-    });
-
-    // Helper to get column index by possible matching names
-    const getColIndex = (possibleNames: string[]): number | undefined => {
-      for (const name of possibleNames) {
-        const norm = normalizeHeader(name);
-        if (colMap[norm] !== undefined) {
-          return colMap[norm];
-        }
-      }
-      return undefined;
-    };
-
-    // Find indices for target columns
-    const idxNro = getColIndex(['NRO', 'NO', 'NUM', 'NUMERO']);
-    const idxCantidad = getColIndex(['CANTIDAD', 'CANT']);
-    const idxEmpresa = getColIndex(['EMPRESA', 'SEDE', 'CENTRO COMERCIAL', 'CC']);
-    const idxArea = getColIndex(['AREA', 'DEPARTAMENTO', 'DEPTO']);
-    const idxUsuario = getColIndex(['USUARIO', 'CUSTODIO', 'RESPONSABLE', 'PERSONA']);
-    const idxTipo = getColIndex(['TIPO', 'TIPO EQUIPO', 'CATEGORIA']);
-    const idxMarca = getColIndex(['MARCA']);
-    const idxModelo = getColIndex(['MODELO']);
-    const idxSerial = getColIndex(['SERIAL', 'SERIE', 'S/N']);
-    const idxObservaciones = getColIndex(['OBSERVACIONES', 'OBS', 'COMENTARIOS', 'DETALLE']);
-    const idxPrecio = getColIndex(['PRECIO REFERENCIAL', 'PRECIO', 'COSTO', 'VALOR']);
-    const idxCodigo = getColIndex(['CODIGO', 'CÓDIGO']);
-    const idxEstado = getColIndex(['ESTADO']);
-
-    // Check required columns (at least Empresa and Tipo/Marca are needed to do a meaningful insert)
-    if (!idxEmpresa) {
-      throw new Error('No se pudo encontrar la columna "EMPRESA" (o "SEDE") en el Excel.');
-    }
-    if (!idxTipo && !idxMarca) {
-      throw new Error('El Excel debe contener al menos las columnas "TIPO" o "MARCA".');
-    }
-
-    const rowCount = worksheet.rowCount;
     const isN1 = currentUser.rol_nombre === 'TECNICO' && currentUser.nivel_soporte === 'N1';
 
-    // Iterate through rows sequentially
-    for (let r = 2; r <= rowCount; r++) {
-      const row = worksheet.getRow(r);
-      
-      // Skip completely empty rows
-      let hasData = false;
-      row.eachCell(() => { hasData = true; });
-      if (!hasData) continue;
+    // Loop through each sheet to process
+    for (const sheetItem of worksheetsToProcess) {
+      const worksheet = sheetItem.ws;
+      const currentTypeId = sheetItem.typeId;
+      const tipoInventarioNombre = tipoInvMap.get(currentTypeId) || 'Otro'; 
+      const tipoInvLower = tipoInventarioNombre.toLowerCase();
 
-      result.totalProcessed++;
+      // 1. Map headers to column numbers
+      const headerRow = worksheet.getRow(1);
+      const colMap: { [key: string]: number } = {};
 
-      try {
-        // Read cells
-        const empresaName = idxEmpresa ? getCellString(row.getCell(idxEmpresa).value) : '';
-        const areaVal = idxArea ? getCellString(row.getCell(idxArea).value) : '';
-        const usuarioName = idxUsuario ? getCellString(row.getCell(idxUsuario).value) : '';
-        const tipoName = idxTipo ? getCellString(row.getCell(idxTipo).value) : 'Otro';
-        const marcaVal = idxMarca ? getCellString(row.getCell(idxMarca).value) : 'Genérico';
-        const modeloVal = idxModelo ? getCellString(row.getCell(idxModelo).value) : 'N/A';
-        const serialVal = idxSerial ? getCellString(row.getCell(idxSerial).value) : 'S/N';
-        const observacionesVal = idxObservaciones ? getCellString(row.getCell(idxObservaciones).value) : '';
-        const precioVal = idxPrecio ? getCellNumber(row.getCell(idxPrecio).value) : null;
-        const cantidadVal = idxCantidad ? Math.max(1, getCellNumber(row.getCell(idxCantidad).value)) : 1;
-        const codigoExcel = idxCodigo ? getCellString(row.getCell(idxCodigo).value) : '';
-        const estadoExcel = idxEstado ? getCellString(row.getCell(idxEstado).value) : '';
-
-        if (!empresaName.trim()) {
-          result.errors.push(`Fila ${r}: Nombre de empresa/sede vacío.`);
-          continue;
+      headerRow.eachCell((cell, colNumber) => {
+        const headerStr = getCellString(cell.value);
+        if (headerStr) {
+          const norm = normalizeHeader(headerStr);
+          colMap[norm] = colNumber;
         }
+      });
 
-        // --- 2. Match or Create Empresa ---
-        let empresaId = 0;
-        const [empresaRows] = await pool.query<RowDataPacket[]>(
-          'SELECT id, nombre FROM empresa WHERE LOWER(nombre) = ?',
-          [empresaName.toLowerCase().trim()]
-        );
-
-        if (empresaRows.length > 0) {
-          empresaId = empresaRows[0].id;
-        } else {
-          // If not found
-          if (isN1) {
-            result.errors.push(`Fila ${r}: La sede "${empresaName}" no existe en el sistema y no tienes permisos para crearla.`);
-            continue;
-          } else {
-            // Create company
-            const [newEmp] = await pool.query<ResultSetHeader>(
-              'INSERT INTO empresa (nombre) VALUES (?)',
-              [empresaName.trim().toUpperCase()]
-            );
-            empresaId = newEmp.insertId;
-            console.log(`Created new Sede/Empresa: ${empresaName} with ID ${empresaId}`);
+      // Helper to get column index by possible matching names
+      const getColIndex = (possibleNames: string[]): number | undefined => {
+        for (const name of possibleNames) {
+          const norm = normalizeHeader(name);
+          if (colMap[norm] !== undefined) {
+            return colMap[norm];
           }
         }
+        return undefined;
+      };
 
-        // Validate N1 permissions
-        if (isN1 && !assignedEmpresaIds.includes(empresaId)) {
-          result.errors.push(`Fila ${r}: No tienes autorización para registrar activos en la sede "${empresaName}".`);
-          continue;
-        }
+      // Find indices for target columns
+      const idxNro = getColIndex(['NRO', 'NO', 'NUM', 'NUMERO']);
+      const idxCantidad = getColIndex(['CANTIDAD', 'CANT']);
+      const idxEmpresa = getColIndex(['EMPRESA', 'SEDE', 'CENTRO COMERCIAL', 'CC']);
+      const idxArea = getColIndex(['AREA', 'DEPARTAMENTO', 'DEPTO']);
+      const idxUsuario = getColIndex(['USUARIO', 'CUSTODIO', 'RESPONSABLE', 'PERSONA']);
+      const idxTipo = getColIndex(['TIPO', 'TIPO EQUIPO', 'CATEGORIA']);
+      const idxMarca = getColIndex(['MARCA']);
+      const idxModelo = getColIndex(['MODELO']);
+      const idxSerial = getColIndex(['SERIAL', 'SERIE', 'S/N']);
+      const idxObservaciones = getColIndex(['OBSERVACIONES', 'OBS', 'COMENTARIOS', 'DETALLE']);
+      const idxPrecio = getColIndex(['PRECIO REFERENCIAL', 'PRECIO', 'COSTO', 'VALOR']);
+      const idxCodigo = getColIndex(['CODIGO', 'CÓDIGO']);
+      const idxEstado = getColIndex(['ESTADO']);
 
-        let customCodigo: string | null = null;
-        if (codigoExcel.trim()) {
-          const [existingCode] = await pool.query<RowDataPacket[]>(
-            'SELECT id FROM activo WHERE codigo = ?',
-            [codigoExcel.trim().toUpperCase()]
-          );
-          if (existingCode.length > 0) {
-            result.errors.push(`Fila ${r}: El código de activo "${codigoExcel.trim().toUpperCase()}" ya está registrado.`);
-            continue;
-          }
-          customCodigo = codigoExcel.trim().toUpperCase();
-        }
+      // Check required columns
+      if (!idxEmpresa) {
+        result.errors.push(`Hoja "${worksheet.name}": No se pudo encontrar la columna "EMPRESA" (o "SEDE").`);
+        continue;
+      }
+      if (!idxTipo && !idxMarca) {
+        result.errors.push(`Hoja "${worksheet.name}": El Excel debe contener al menos las columnas "TIPO" o "MARCA".`);
+        continue;
+      }
 
-        if (tipoInvLower.includes('consumible')) {
-          // --- CONSUMIBLE IMPORT LOGIC ---
-          const nombreParts = [];
-          if (tipoName) nombreParts.push(tipoName.trim());
-          if (marcaVal && marcaVal !== 'Genérico') nombreParts.push(marcaVal.trim());
-          if (modeloVal && modeloVal !== 'N/A') nombreParts.push(modeloVal.trim());
-          const consumibleNombre = nombreParts.join(' ').trim() || 'Consumible Sin Nombre';
+      const rowCount = worksheet.rowCount;
 
-          const descParts = [];
-          if (empresaName) descParts.push(`Sede: ${empresaName.trim()}`);
-          if (areaVal) descParts.push(`Área: ${areaVal.trim()}`);
-          if (usuarioName) descParts.push(`Usuario: ${usuarioName.trim()}`);
-          if (serialVal && serialVal !== 'S/N') descParts.push(`Serial: ${serialVal.trim()}`);
-          if (precioVal && precioVal > 0) descParts.push(`Precio Ref: $${precioVal}`);
-          if (observacionesVal) descParts.push(`Obs: ${observacionesVal.trim()}`);
-          const consumibleDescripcion = descParts.join(', ') || null;
-
-          const [existing] = await pool.query<RowDataPacket[]>(
-            'SELECT id FROM consumible WHERE nombre = ? AND (descripcion = ? OR (descripcion IS NULL AND ? IS NULL))',
-            [consumibleNombre, consumibleDescripcion, consumibleDescripcion]
-          );
-
-          if (existing.length > 0) {
-            await pool.query(
-              'UPDATE consumible SET stock_actual = stock_actual + ? WHERE id = ?',
-              [cantidadVal, existing[0].id]
-            );
-          } else {
-            await pool.query(
-              'INSERT INTO consumible (nombre, descripcion, unidad_medida, stock_actual, stock_minimo) VALUES (?, ?, ?, ?, ?)',
-              [consumibleNombre, consumibleDescripcion, 'Unidades', cantidadVal, 5]
-            );
-          }
-          result.totalInserted++;
-          continue;
-        }
-
-        // --- 3. Match or Create Tipo de Equipo ---
-        const targetTipoStr = tipoName.trim() || 'Otro';
-        const normalizedInput = normalizeHeader(targetTipoStr);
-        let tipoEquipoId = tipoMap.get(normalizedInput);
-
-        if (!tipoEquipoId) {
-          // Create type with unique abbreviation
-          const abrev = await generateUniqueAbbreviation(targetTipoStr);
-          const [newTipo] = await pool.query<ResultSetHeader>(
-            'INSERT INTO tipo_equipo (nombre, abreviacion) VALUES (?, ?)',
-            [targetTipoStr, abrev]
-          );
-          tipoEquipoId = newTipo.insertId;
-          tipoMap.set(normalizedInput, tipoEquipoId);
-          console.log(`Created new Tipo Equipo: ${targetTipoStr} with ID ${tipoEquipoId} (Abrev: ${abrev})`);
-        }
-
-        // --- 4. Match or Create Persona (Usuario) ---
-        let personaId: number | null = null;
-        const targetUsuarioStr = usuarioName.trim();
-        const skipPersonaNames = ['bodega', 'bodega central', 'stock', 'libre', 'disponible', 'n/a', ''];
+      // Iterate through rows sequentially
+      for (let r = 2; r <= rowCount; r++) {
+        const row = worksheet.getRow(r);
         
-        if (targetUsuarioStr && !skipPersonaNames.includes(targetUsuarioStr.toLowerCase())) {
-          const [personaRows] = await pool.query<RowDataPacket[]>(
-            'SELECT id FROM persona WHERE LOWER(nombre) = ? AND empresa_id = ?',
-            [targetUsuarioStr.toLowerCase(), empresaId]
+        // Skip completely empty rows
+        let hasData = false;
+        row.eachCell(() => { hasData = true; });
+        if (!hasData) continue;
+
+        result.totalProcessed++;
+
+        try {
+          // Read cells
+          const empresaName = idxEmpresa ? getCellString(row.getCell(idxEmpresa).value) : '';
+          const areaVal = idxArea ? getCellString(row.getCell(idxArea).value) : '';
+          const usuarioName = idxUsuario ? getCellString(row.getCell(idxUsuario).value) : '';
+          const tipoName = idxTipo ? getCellString(row.getCell(idxTipo).value) : 'Otro';
+          const marcaVal = idxMarca ? getCellString(row.getCell(idxMarca).value) : 'Genérico';
+          const modeloVal = idxModelo ? getCellString(row.getCell(idxModelo).value) : 'N/A';
+          const serialVal = idxSerial ? getCellString(row.getCell(idxSerial).value) : 'S/N';
+          const observacionesVal = idxObservaciones ? getCellString(row.getCell(idxObservaciones).value) : '';
+          const precioVal = idxPrecio ? getCellNumber(row.getCell(idxPrecio).value) : null;
+          const cantidadVal = idxCantidad ? Math.max(1, getCellNumber(row.getCell(idxCantidad).value)) : 1;
+          const codigoExcel = idxCodigo ? getCellString(row.getCell(idxCodigo).value) : '';
+          const estadoExcel = idxEstado ? getCellString(row.getCell(idxEstado).value) : '';
+
+          if (!empresaName.trim()) {
+            result.errors.push(`Hoja "${worksheet.name}" Fila ${r}: Nombre de empresa/sede vacío.`);
+            continue;
+          }
+
+          // --- 2. Match or Create Empresa ---
+          let empresaId = 0;
+          const [empresaRows] = await pool.query<RowDataPacket[]>(
+            'SELECT id, nombre FROM empresa WHERE LOWER(nombre) = ?',
+            [empresaName.toLowerCase().trim()]
           );
 
-          if (personaRows.length > 0) {
-            personaId = personaRows[0].id;
+          if (empresaRows.length > 0) {
+            empresaId = empresaRows[0].id;
           } else {
-            // Create Persona with temporary unique cedula
-            const tempCedula = `TEMP-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
-            const [newPers] = await pool.query<ResultSetHeader>(
-              'INSERT INTO persona (cedula, nombre, departamento, cargo, empresa_id) VALUES (?, ?, ?, ?, ?)',
-              [tempCedula, targetUsuarioStr, areaVal || 'Sistemas', 'Importado desde Excel', empresaId]
+            if (isN1) {
+              result.errors.push(`Hoja "${worksheet.name}" Fila ${r}: La sede "${empresaName}" no existe en el sistema y no tienes permisos para crearla.`);
+              continue;
+            } else {
+              const [newEmp] = await pool.query<ResultSetHeader>(
+                'INSERT INTO empresa (nombre) VALUES (?)',
+                [empresaName.trim().toUpperCase()]
+              );
+              empresaId = newEmp.insertId;
+              console.log(`Created new Sede/Empresa: ${empresaName} with ID ${empresaId}`);
+            }
+          }
+
+          // Validate N1 permissions
+          if (isN1 && !assignedEmpresaIds.includes(empresaId)) {
+            result.errors.push(`Hoja "${worksheet.name}" Fila ${r}: No tienes autorización para registrar activos en la sede "${empresaName}".`);
+            continue;
+          }
+
+          let customCodigo: string | null = null;
+          if (codigoExcel.trim()) {
+            const [existingCode] = await pool.query<RowDataPacket[]>(
+              'SELECT id FROM activo WHERE codigo = ?',
+              [codigoExcel.trim().toUpperCase()]
             );
-            personaId = newPers.insertId;
-            console.log(`Created new Persona: ${targetUsuarioStr} with ID ${personaId}`);
+            if (existingCode.length > 0) {
+              result.errors.push(`Hoja "${worksheet.name}" Fila ${r}: El código de activo "${codigoExcel.trim().toUpperCase()}" ya está registrado.`);
+              continue;
+            }
+            customCodigo = codigoExcel.trim().toUpperCase();
           }
-        }
 
-        // --- 5. Determine State ---
-        let estado: 'Stock' | 'Asignado' | 'Mantenimiento' | 'Baja' | 'Reciclaje' = 'Stock';
-        const rawEstado = estadoExcel.trim().toLowerCase();
-        if (rawEstado.includes('stock') || rawEstado.includes('bodega') || rawEstado.includes('libre') || rawEstado.includes('disponible')) {
-          estado = 'Stock';
-        } else if (rawEstado.includes('asignado') || rawEstado.includes('uso') || rawEstado.includes('entregado')) {
-          estado = 'Asignado';
-        } else if (rawEstado.includes('mantenimiento') || rawEstado.includes('taller') || rawEstado.includes('reparacion')) {
-          estado = 'Mantenimiento';
-        } else if (rawEstado.includes('baja') || rawEstado.includes('desechado') || rawEstado.includes('dañado')) {
-          estado = 'Baja';
-        } else if (rawEstado.includes('reciclaje') || rawEstado.includes('chatarra')) {
-          estado = 'Reciclaje';
-        } else {
-          if (tipoInvLower.includes('reciclaje')) {
-            estado = 'Reciclaje';
-          } else if (tipoInvLower.includes('asignado')) {
-            estado = 'Asignado';
-          } else if (tipoInvLower.includes('servidor') || tipoInvLower.includes('infraestructura')) {
-            estado = personaId ? 'Asignado' : 'Stock';
-          } else {
+          if (tipoInvLower.includes('consumible')) {
+            // --- CONSUMIBLE IMPORT LOGIC ---
+            const nombreParts = [];
+            if (tipoName) nombreParts.push(tipoName.trim());
+            if (marcaVal && marcaVal !== 'Genérico') nombreParts.push(marcaVal.trim());
+            if (modeloVal && modeloVal !== 'N/A') nombreParts.push(modeloVal.trim());
+            const consumibleNombre = nombreParts.join(' ').trim() || 'Consumible Sin Nombre';
+
+            const descParts = [];
+            if (empresaName) descParts.push(`Sede: ${empresaName.trim()}`);
+            if (areaVal) descParts.push(`Área: ${areaVal.trim()}`);
+            if (usuarioName) descParts.push(`Usuario: ${usuarioName.trim()}`);
+            if (serialVal && serialVal !== 'S/N') descParts.push(`Serial: ${serialVal.trim()}`);
+            if (precioVal && precioVal > 0) descParts.push(`Precio Ref: $${precioVal}`);
+            if (observacionesVal) descParts.push(`Obs: ${observacionesVal.trim()}`);
+            const consumibleDescripcion = descParts.join(', ') || null;
+
+            const [existing] = await pool.query<RowDataPacket[]>(
+              'SELECT id FROM consumible WHERE nombre = ? AND (descripcion = ? OR (descripcion IS NULL AND ? IS NULL))',
+              [consumibleNombre, consumibleDescripcion, consumibleDescripcion]
+            );
+
+            if (existing.length > 0) {
+              await pool.query(
+                'UPDATE consumible SET stock_actual = stock_actual + ? WHERE id = ?',
+                [cantidadVal, existing[0].id]
+              );
+            } else {
+              await pool.query(
+                'INSERT INTO consumible (nombre, descripcion, unidad_medida, stock_actual, stock_minimo) VALUES (?, ?, ?, ?, ?)',
+                [consumibleNombre, consumibleDescripcion, 'Unidades', cantidadVal, 5]
+              );
+            }
+            result.totalInserted++;
+            continue;
+          }
+
+          // --- 3. Match or Create Tipo de Equipo ---
+          const targetTipoStr = tipoName.trim() || 'Otro';
+          const normalizedInput = normalizeHeader(targetTipoStr);
+          let tipoEquipoId = tipoMap.get(normalizedInput);
+
+          if (!tipoEquipoId) {
+            const abrev = await generateUniqueAbbreviation(targetTipoStr);
+            const [newTipo] = await pool.query<ResultSetHeader>(
+              'INSERT INTO tipo_equipo (nombre, abreviacion) VALUES (?, ?)',
+              [targetTipoStr, abrev]
+            );
+            tipoEquipoId = newTipo.insertId;
+            tipoMap.set(normalizedInput, tipoEquipoId);
+            console.log(`Created new Tipo Equipo: ${targetTipoStr} with ID ${tipoEquipoId} (Abrev: ${abrev})`);
+          }
+
+          // --- 4. Match or Create Persona (Usuario) ---
+          let personaId: number | null = null;
+          const targetUsuarioStr = usuarioName.trim();
+          const skipPersonaNames = ['bodega', 'bodega central', 'stock', 'libre', 'disponible', 'n/a', ''];
+          
+          if (targetUsuarioStr && !skipPersonaNames.includes(targetUsuarioStr.toLowerCase())) {
+            const [personaRows] = await pool.query<RowDataPacket[]>(
+              'SELECT id FROM persona WHERE LOWER(nombre) = ? AND empresa_id = ?',
+              [targetUsuarioStr.toLowerCase(), empresaId]
+            );
+
+            if (personaRows.length > 0) {
+              personaId = personaRows[0].id;
+            } else {
+              const tempCedula = `TEMP-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+              const [newPers] = await pool.query<ResultSetHeader>(
+                'INSERT INTO persona (cedula, nombre, departamento, cargo, empresa_id) VALUES (?, ?, ?, ?, ?)',
+                [tempCedula, targetUsuarioStr, areaVal || 'Sistemas', 'Importado desde Excel', empresaId]
+              );
+              personaId = newPers.insertId;
+              console.log(`Created new Persona: ${targetUsuarioStr} with ID ${personaId}`);
+            }
+          }
+
+          // --- 5. Determine State ---
+          let estado: 'Stock' | 'Asignado' | 'Mantenimiento' | 'Baja' | 'Reciclaje' = 'Stock';
+          const rawEstado = estadoExcel.trim().toLowerCase();
+          if (rawEstado.includes('stock') || rawEstado.includes('bodega') || rawEstado.includes('libre') || rawEstado.includes('disponible')) {
             estado = 'Stock';
+          } else if (rawEstado.includes('asignado') || rawEstado.includes('uso') || rawEstado.includes('entregado')) {
+            estado = 'Asignado';
+          } else if (rawEstado.includes('mantenimiento') || rawEstado.includes('taller') || rawEstado.includes('reparacion')) {
+            estado = 'Mantenimiento';
+          } else if (rawEstado.includes('baja') || rawEstado.includes('desechado') || rawEstado.includes('dañado')) {
+            estado = 'Baja';
+          } else if (rawEstado.includes('reciclaje') || rawEstado.includes('chatarra')) {
+            estado = 'Reciclaje';
+          } else {
+            if (tipoInvLower.includes('reciclaje')) {
+              estado = 'Reciclaje';
+            } else if (tipoInvLower.includes('asignado')) {
+              estado = 'Asignado';
+            } else if (tipoInvLower.includes('servidor') || tipoInvLower.includes('infraestructura')) {
+              estado = personaId ? 'Asignado' : 'Stock';
+            } else {
+              estado = 'Stock';
+            }
           }
+
+          // Bodega Name mapping
+          const bodegaVal = bodegaNombreOpcional || (tipoInvLower.includes('bodega') ? 'Bodega Central' : null);
+
+          // --- 6. Insert Loop for quantity ---
+          const loopCount = (tipoInvLower.includes('asignado') || customCodigo) ? 1 : cantidadVal;
+
+          for (let i = 0; i < loopCount; i++) {
+            const codigo = customCodigo || await generateUniqueCode(empresaId, tipoEquipoId);
+
+            const [insertRes] = await pool.query<ResultSetHeader>(
+              `INSERT INTO activo (
+                codigo, serial, marca, modelo, especificaciones, estado, 
+                persona_id, proveedor_id, fecha_compra, tipo_equipo_id, empresa_id,
+                bodega, area, precio_referencial, observaciones, tipo_inventario_id
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                codigo,                  // 1
+                serialVal,               // 2
+                marcaVal,                // 3
+                modeloVal,               // 4
+                observacionesVal || null,// 5
+                estado,                  // 6
+                personaId,               // 7
+                null,                    // 8
+                null,                    // 9
+                tipoEquipoId,            // 10
+                empresaId,               // 11
+                bodegaVal || null,       // 12
+                areaVal || null,         // 13
+                precioVal,               // 14
+                observacionesVal || null,// 15
+                currentTypeId            // 16
+              ]
+            );
+
+            await pool.query(
+              `INSERT INTO historial_cambios_activo (activo_id, usuario_id, cambios) VALUES (?, ?, ?)`,
+              [insertRes.insertId, currentUser.id, `Activo registrado por importación de hoja Excel (${worksheet.name})`]
+            );
+
+            result.totalInserted++;
+          }
+        } catch (err: any) {
+          result.errors.push(`Hoja "${worksheet.name}" Fila ${r}: Error inesperado - ${err.message}`);
         }
-
-        // Bodega Name mapping
-        const bodegaVal = bodegaNombreOpcional || (tipoInvLower.includes('bodega') ? 'Bodega Central' : null);
-
-        // --- 6. Insert Loop for quantity ---
-        const loopCount = (tipoInvLower.includes('asignado') || customCodigo) ? 1 : cantidadVal;
-
-        for (let i = 0; i < loopCount; i++) {
-          // Generate unique sequential code
-          const codigo = customCodigo || await generateUniqueCode(empresaId, tipoEquipoId);
-
-          const [insertRes] = await pool.query<ResultSetHeader>(
-            `INSERT INTO activo (
-              codigo, serial, marca, modelo, especificaciones, estado, 
-              persona_id, proveedor_id, fecha_compra, tipo_equipo_id, empresa_id,
-              bodega, area, precio_referencial, observaciones, tipo_inventario_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              codigo,                  // 1
-              serialVal,               // 2
-              marcaVal,                // 3
-              modeloVal,               // 4
-              observacionesVal || null,// 5
-              estado,                  // 6
-              personaId,               // 7
-              null,                    // 8
-              null,                    // 9
-              tipoEquipoId,            // 10
-              empresaId,               // 11
-              bodegaVal || null,       // 12
-              areaVal || null,         // 13
-              precioVal,               // 14
-              observacionesVal || null,// 15
-              tipoInventarioId         // 16
-            ]
-          );
-
-          await pool.query(
-            `INSERT INTO historial_cambios_activo (activo_id, usuario_id, cambios) VALUES (?, ?, ?)`,
-            [insertRes.insertId, currentUser.id, 'Activo creado / registrado por importación Excel']
-          );
-
-          result.totalInserted++;
-        }
-      } catch (err: any) {
-        result.errors.push(`Fila ${r}: Error inesperado - ${err.message}`);
       }
     }
 
     if (result.errors.length > 0) {
-      result.success = result.totalInserted > 0; // If at least one row was imported
+      result.success = result.totalInserted > 0;
     }
 
     return result;
