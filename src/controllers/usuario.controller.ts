@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import * as usuarioService from '../services/usuario.service';
-import { decryptWithServerSecret } from '../db/e2ee';
+import { decryptWithServerSecret, generateKeysForUser } from '../db/e2ee';
 import { config } from '../core/config';
 
 export const getUsuarios = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -69,7 +69,22 @@ export const getUsuarioKeys = async (req: AuthRequest, res: Response): Promise<v
           private_key: JSON.parse(decryptedPrivKey)
         });
       } catch (decErr) {
-        // Fallback if not decryptable
+        console.warn(`Decryption of E2EE keys failed for user ${userId}. Regenerating keys...`);
+        try {
+          await generateKeysForUser(userId, req.currentUser.email);
+          const freshKeys = await usuarioService.getUsuarioKeys(userId);
+          if (freshKeys && freshKeys.encrypted_private_key) {
+            const freshDecrypted = decryptWithServerSecret(freshKeys.encrypted_private_key, serverSecret);
+            res.json({
+              public_key: freshKeys.public_key,
+              private_key: JSON.parse(freshDecrypted)
+            });
+            return;
+          }
+        } catch (genErr: any) {
+          console.error(`Failed to regenerate keys on the fly for user ${userId}:`, genErr);
+        }
+        // Fallback if regeneration fails
         res.json(keys);
       }
     } else {

@@ -5,7 +5,8 @@ import { createAccessToken } from '../utils/jwt';
 import { verifyPassword } from '../utils/password';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import { pool } from '../db/connection';
-import { generateKeysForUser } from '../db/e2ee';
+import { generateKeysForUser, decryptWithServerSecret } from '../db/e2ee';
+import { config } from '../core/config';
 
 export const login = async (req: Request, res: Response): Promise<void> => {
   const { username, password } = req.body;
@@ -23,8 +24,19 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  // Generate E2EE keys on login if they are missing
-  if (!user.public_key || !user.encrypted_private_key) {
+  // Generate E2EE keys on login if they are missing or undecryptable
+  const serverSecret = config.JWT_SECRET || 'default-secret-key-smo-it-core';
+  let needsKeys = !user.public_key || !user.encrypted_private_key;
+  if (!needsKeys) {
+    try {
+      decryptWithServerSecret(user.encrypted_private_key, serverSecret);
+    } catch (err) {
+      console.warn(`Stored E2EE keys for ${user.email} could not be decrypted. Regenerating...`);
+      needsKeys = true;
+    }
+  }
+
+  if (needsKeys) {
     try {
       await generateKeysForUser(user.id, user.email);
     } catch (keyErr) {

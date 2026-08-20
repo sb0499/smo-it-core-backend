@@ -113,6 +113,12 @@ export async function generateKeysForUser(userId: number, email: string) {
   );
   console.log(`Generated E2EE keys for user: ${email} (ID: ${userId})`);
 
+  // Invalidate existing memberships' keys since user keypair changed
+  await pool.query(
+    'UPDATE chat_canal_miembro SET encrypted_channel_key = NULL WHERE usuario_id = ?',
+    [userId]
+  );
+
   // Auto-join this user to all public channels
   const [publicChannels] = await pool.query<RowDataPacket[]>(
     'SELECT id FROM chat_canal WHERE is_private = FALSE'
@@ -128,8 +134,15 @@ export async function generateKeysForUser(userId: number, email: string) {
         [canal.id, userId]
       );
     }
-    // Sync keys for this channel member
-    await syncMemberChannelKey(canal.id, userId);
+  }
+
+  // Get all channels this user is a member of and sync keys
+  const [memberships] = await pool.query<RowDataPacket[]>(
+    'SELECT canal_id FROM chat_canal_miembro WHERE usuario_id = ?',
+    [userId]
+  );
+  for (const m of memberships) {
+    await syncMemberChannelKey(m.canal_id, userId);
   }
 }
 
