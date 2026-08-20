@@ -10,7 +10,7 @@ export const generarActaMovimiento = (movimiento: any): Promise<Buffer> => {
     doc.on('error', reject);
 
     // Encabezado institucional
-    doc.fillColor('#1e3a8a').fontSize(22).font('Helvetica-Bold').text('SMO IT CORE');
+    doc.fillColor('#1e3a8a').fontSize(22).font('Helvetica-Bold').text('TISMO');
     doc.fillColor('#4b5563').fontSize(12).font('Helvetica').text('SHOPPING MANAGEMENTS OPERADORA');
     doc.fillColor('#9ca3af').fontSize(10).text('DEPARTAMENTO DE TI');
 

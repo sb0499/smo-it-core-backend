@@ -130,7 +130,7 @@ export const recalcularAvanceYEstados = async (proyectoId: number, usuarioId: nu
           await enviarCorreo(
             dest,
             `Proyecto Finalizado: ${projAnterior.nombre}`,
-            `Hola,\n\nNos complace informarte que el proyecto "${projAnterior.nombre}" ha sido finalizado con éxito (100% de avance en todas sus tareas y subtareas).\n\nCreador del Proyecto: ${creador?.nombre_completo || 'Sistema'}\nFecha de Finalización: ${new Date().toLocaleString()}\n\nSaludos,\nSistema SMO IT CORE`
+            `Hola,\n\nNos complace informarte que el proyecto "${projAnterior.nombre}" ha sido finalizado con éxito (100% de avance en todas sus tareas y subtareas).\n\nCreador del Proyecto: ${creador?.nombre_completo || 'Sistema'}\nFecha de Finalización: ${new Date().toLocaleString()}\n\nSaludos,\nSistema TISMO`
           ).catch(console.error);
         }
 
@@ -838,7 +838,7 @@ export const addComentario = async (data: { autor_id: number; proyecto_id?: numb
         await enviarCorreo(
           u.email,
           `Mención en IT CORE: @${u.nombre_completo}`,
-          `Hola ${u.nombre_completo},\n\nEl usuario "${autorNombre}" te ha mencionado en un comentario:\n\n"${data.contenido}"\n\nSaludos,\nSistema SMO IT CORE`
+          `Hola ${u.nombre_completo},\n\nEl usuario "${autorNombre}" te ha mencionado en un comentario:\n\n"${data.contenido}"\n\nSaludos,\nSistema TISMO`
         ).catch(console.error);
 
         // Internal Notification
@@ -975,7 +975,7 @@ export const enviarReporteSemanalTecnicos = async () => {
       </table>
       <p style="margin-top:20px;">Por favor, procura actualizar el avance y finalizar a tiempo tus pendientes. ¡Éxitos!</p>
       <br/>
-      <small>Enviado automáticamente por SMO IT CORE System</small>
+      <small>Enviado automáticamente por TISMO System</small>
     `;
 
     await enviarCorreo(tech.email, `Reporte Semanal de Pendientes: ${tech.nombre_completo}`, html).catch(console.error);
@@ -1026,7 +1026,7 @@ export const enviarReporteSemanalAdmin = async () => {
   }
 
   const html = `
-    <h2>Reporte de Avances Semanales - SMO IT CORE</h2>
+    <h2>Reporte de Avances Semanales - TISMO</h2>
     <p>Estimado Administrador, a continuación se detalla el estado actual de tareas/subtareas del personal técnico:</p>
     <table style="border-collapse:collapse; width:100%; font-family:sans-serif; border:1px solid #ddd;">
       <thead>
@@ -1044,7 +1044,7 @@ export const enviarReporteSemanalAdmin = async () => {
     </table>
     <p style="margin-top:20px;">Puede ingresar al panel web de administración para revisar el desglose y bitácora de cada proyecto.</p>
     <br/>
-    <small>Enviado automáticamente por SMO IT CORE System</small>
+    <small>Enviado automáticamente por TISMO</small>
   `;
 
   for (const adm of admins) {

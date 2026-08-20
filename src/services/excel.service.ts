@@ -432,7 +432,7 @@ export const excelService = {
     const [activos] = await pool.query<RowDataPacket[]>(query, params);
 
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'SMO IT CORE SYSTEM';
+    workbook.creator = 'TISMO';
     workbook.created = new Date();
 
     // Define columns structures
