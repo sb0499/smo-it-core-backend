@@ -80,3 +80,24 @@ export const getUsuarioKeys = async (req: AuthRequest, res: Response): Promise<v
     res.status(500).json({ detail: error.message });
   }
 };
+
+export const deleteUsuario = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = parseInt(req.params.user_id);
+    const usuario = await usuarioService.deleteUsuario(userId);
+    if (!usuario) {
+      res.status(404).json({ detail: 'Usuario no encontrado' });
+      return;
+    }
+    res.json({ message: 'Usuario eliminado correctamente' });
+  } catch (error: any) {
+    if (error.code === 'ER_ROW_IS_REFERENCED_2' || error.errno === 1451) {
+      res.status(400).json({
+        detail: 'No se puede eliminar este usuario porque tiene registros asociados en el sistema (como tickets, proyectos o movimientos de inventario). Se sugiere desactivar la cuenta en su lugar.'
+      });
+      return;
+    }
+    res.status(500).json({ detail: error.message || 'Error al eliminar el usuario' });
+  }
+};
+

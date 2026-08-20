@@ -94,3 +94,4 @@ usuariosRouter.post('/', requireAuth, requireAdmin, ctrl.createUsuario);
 usuariosRouter.put('/:user_id', requireAuth, requireAdmin, ctrl.updateUsuario);
 usuariosRouter.put('/:user_id/keys', requireAuth, ctrl.updateUsuarioKeys);
 usuariosRouter.get('/:user_id/keys', requireAuth, ctrl.getUsuarioKeys);
+usuariosRouter.delete('/:user_id', requireAuth, requireAdmin, ctrl.deleteUsuario);

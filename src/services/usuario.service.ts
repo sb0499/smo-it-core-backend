@@ -162,3 +162,43 @@ export const getUsuarioKeys = async (userId: number) => {
   );
   return rows[0] || null;
 };
+
+export const deleteUsuario = async (userId: number) => {
+  const [existing] = await pool.query<RowDataPacket[]>(
+    `SELECT * FROM usuario WHERE id = ?`,
+    [userId]
+  );
+  if (existing.length === 0) return null;
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    // programmatically nullify referencing columns
+    await conn.query('UPDATE ticket SET creador_id = NULL WHERE creador_id = ?', [userId]);
+    await conn.query('UPDATE ticket SET tecnico_id = NULL WHERE tecnico_id = ?', [userId]);
+    await conn.query('UPDATE proyecto SET creador_id = NULL WHERE creador_id = ?', [userId]);
+    await conn.query('UPDATE tarea_proyecto SET responsable_id = NULL WHERE responsable_id = ?', [userId]);
+    await conn.query('UPDATE subtarea_proyecto SET responsable_id = NULL WHERE responsable_id = ?', [userId]);
+    await conn.query('UPDATE proyecto_comentario SET autor_id = NULL WHERE autor_id = ?', [userId]);
+    await conn.query('UPDATE proyecto_archivo SET autor_id = NULL WHERE autor_id = ?', [userId]);
+    await conn.query('UPDATE proyecto_historial SET usuario_id = NULL WHERE usuario_id = ?', [userId]);
+    await conn.query('UPDATE chat_canal SET creador_id = NULL WHERE creador_id = ?', [userId]);
+    await conn.query('UPDATE movimiento_inventario SET usuario_id = NULL WHERE usuario_id = ?', [userId]);
+    await conn.query('UPDATE historial_cambios_activo SET usuario_id = NULL WHERE usuario_id = ?', [userId]);
+    await conn.query('UPDATE entrega_credencial SET entregado_por_id = NULL WHERE entregado_por_id = ?', [userId]);
+    await conn.query('UPDATE guardia_feriado SET tecnico_id = NULL WHERE tecnico_id = ?', [userId]);
+
+    // Now delete the user
+    await conn.query('DELETE FROM usuario WHERE id = ?', [userId]);
+
+    await conn.commit();
+    return existing[0];
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+};
+

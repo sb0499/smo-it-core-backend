@@ -326,6 +326,31 @@ async function initDbSchema() {
       await pool.query(`ALTER TABLE chat_canal_miembro ADD COLUMN encrypted_channel_key TEXT NULL`);
     }
 
+    // Make columns referencing usuario nullable to support ON DELETE SET NULL behavior
+    console.log('Migrating columns referencing usuario to be nullable...');
+    const alterQueries = [
+      'ALTER TABLE ticket MODIFY creador_id INT NULL',
+      'ALTER TABLE ticket MODIFY tecnico_id INT NULL',
+      'ALTER TABLE proyecto MODIFY creador_id INT NULL',
+      'ALTER TABLE tarea_proyecto MODIFY responsable_id INT NULL',
+      'ALTER TABLE subtarea_proyecto MODIFY responsable_id INT NULL',
+      'ALTER TABLE proyecto_comentario MODIFY autor_id INT NULL',
+      'ALTER TABLE proyecto_archivo MODIFY autor_id INT NULL',
+      'ALTER TABLE proyecto_historial MODIFY usuario_id INT NULL',
+      'ALTER TABLE chat_canal MODIFY creador_id INT NULL',
+      'ALTER TABLE movimiento_inventario MODIFY usuario_id INT NULL',
+      'ALTER TABLE historial_cambios_activo MODIFY usuario_id INT NULL',
+      'ALTER TABLE entrega_credencial MODIFY entregado_por_id INT NULL',
+      'ALTER TABLE guardia_feriado MODIFY tecnico_id INT NULL'
+    ];
+    for (const q of alterQueries) {
+      try {
+        await pool.query(q);
+      } catch (err: any) {
+        console.log(`Note on migration query "${q}":`, err.message);
+      }
+    }
+
     console.log('Database schema initialization completed.');
     await initializeE2EE();
   } catch (error) {
