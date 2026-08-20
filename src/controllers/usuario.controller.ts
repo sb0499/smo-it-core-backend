@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import * as usuarioService from '../services/usuario.service';
 import { decryptWithServerSecret } from '../db/e2ee';
+import { config } from '../core/config';
 
 export const getUsuarios = async (req: AuthRequest, res: Response): Promise<void> => {
   const skip = parseInt(req.query.skip as string) || 0;
@@ -60,7 +61,7 @@ export const getUsuarioKeys = async (req: AuthRequest, res: Response): Promise<v
     }
     
     if (req.currentUser && req.currentUser.id === userId && keys.encrypted_private_key) {
-      const serverSecret = process.env.JWT_SECRET || 'default-secret-key-smo-it-core';
+      const serverSecret = config.JWT_SECRET || 'default-secret-key-smo-it-core';
       try {
         const decryptedPrivKey = decryptWithServerSecret(keys.encrypted_private_key, serverSecret);
         res.json({

@@ -822,22 +822,26 @@ export const addComentario = async (data: { autor_id: number; proyecto_id?: numb
   const [autorRow] = await pool.query<RowDataPacket[]>(`SELECT nombre_completo FROM usuario WHERE id = ?`, [data.autor_id]);
   const autorNombre = autorRow[0]?.nombre_completo || 'Un usuario';
 
-  // Buscar menciones: buscar cadenas tipo @correo o @nombre
-  const regexMenciones = /@([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|[a-zA-Z0-9]+)/g;
+  // Buscar menciones: buscar cadenas tipo @correo o @nombre (admite guiones bajos, guiones y puntos)
+  const regexMenciones = /@([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|[a-zA-Z0-9._-]+)/g;
   let matches = data.contenido.match(regexMenciones);
   if (matches) {
     for (const match of matches) {
       const limpio = match.substring(1); // Quitar el @
-      // Buscar si coincide con email o nombre_completo
+      // Buscar si coincide con email, prefijo de email, o nombre completo (incluso con guiones bajos)
       const [userRows] = await pool.query<RowDataPacket[]>(
-        `SELECT id, email, nombre_completo FROM usuario WHERE email = ? OR nombre_completo LIKE ?`,
-        [limpio, `%${limpio}%`]
+        `SELECT id, email, nombre_completo FROM usuario 
+         WHERE email = ? 
+            OR SUBSTRING_INDEX(email, '@', 1) = ?
+            OR nombre_completo LIKE ? 
+            OR REPLACE(nombre_completo, ' ', '_') LIKE ?`,
+        [limpio, limpio, `%${limpio}%`, `%${limpio}%`]
       );
 
       for (const u of userRows) {
         await enviarCorreo(
           u.email,
-          `Mención en IT CORE: @${u.nombre_completo}`,
+          `Mención en TISMO: @${u.nombre_completo}`,
           `Hola ${u.nombre_completo},\n\nEl usuario "${autorNombre}" te ha mencionado en un comentario:\n\n"${data.contenido}"\n\nSaludos,\nSistema TISMO`
         ).catch(console.error);
 

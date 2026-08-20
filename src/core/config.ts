@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 export const config = {
-  PROJECT_NAME: "IT CORE SYSTEM - SMO",
+  PROJECT_NAME: "TISMO",
   VERSION: "1.0.0",
   API_V1_STR: "/api/v1",
   

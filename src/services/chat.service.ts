@@ -1,6 +1,7 @@
 import { pool } from '../db/connection';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { syncMemberChannelKey } from '../db/e2ee';
+import crypto from 'crypto';
 
 export const getCanalById = async (canalId: number, usuarioId: number) => {
   const [rows] = await pool.query<RowDataPacket[]>(
@@ -36,7 +37,38 @@ export const createCanal = async (nombre: string, isPrivate: boolean, creadorId:
       );
     }
   } else {
-    await pool.query(`INSERT INTO chat_canal_miembro (canal_id, usuario_id) VALUES (?, ?)`, [canalId, creadorId]);
+    // Generate key on backend if no keys payload is sent (e.g. public channel)
+    let encryptedKey: string | null = null;
+    try {
+      const [userRows] = await pool.query<RowDataPacket[]>(
+        'SELECT public_key FROM usuario WHERE id = ?',
+        [creadorId]
+      );
+      if (userRows.length > 0 && userRows[0].public_key) {
+        const pubKeyStr = userRows[0].public_key;
+        const channelKeyBytes = crypto.randomBytes(32);
+        
+        const pubKeyObj = crypto.createPublicKey({
+          key: JSON.parse(pubKeyStr),
+          format: 'jwk'
+        });
+        const encryptedKeyBytes = crypto.publicEncrypt(
+          {
+            key: pubKeyObj,
+            oaepHash: 'sha256'
+          },
+          channelKeyBytes
+        );
+        encryptedKey = encryptedKeyBytes.toString('base64');
+      }
+    } catch (err: any) {
+      console.error(`Failed to generate backend channel key for creator ${creadorId}:`, err.message);
+    }
+
+    await pool.query(
+      `INSERT INTO chat_canal_miembro (canal_id, usuario_id, encrypted_channel_key) VALUES (?, ?, ?)`,
+      [canalId, creadorId, encryptedKey]
+    );
   }
 
   return await getCanalById(canalId, creadorId);
@@ -94,9 +126,58 @@ export const getOrCreateDMChannel = async (usuarioId1: number, usuarioId2: numbe
       );
     }
   } else {
-    await pool.query(`INSERT INTO chat_canal_miembro (canal_id, usuario_id) VALUES (?, ?)`, [canalId, usuarioId1]);
+    // Generate key on backend if no keys payload is sent (e.g. fallback)
+    let encryptedKey1: string | null = null;
+    let encryptedKey2: string | null = null;
+    try {
+      const [users] = await pool.query<RowDataPacket[]>(
+        'SELECT id, public_key FROM usuario WHERE id IN (?, ?)',
+        [usuarioId1, usuarioId2]
+      );
+      const userMap = new Map(users.map(u => [u.id, u.public_key]));
+      
+      const pubKey1 = userMap.get(usuarioId1);
+      const pubKey2 = userMap.get(usuarioId2);
+      
+      if (pubKey1 || pubKey2) {
+        const channelKeyBytes = crypto.randomBytes(32);
+        
+        if (pubKey1) {
+          const pubKeyObj1 = crypto.createPublicKey({
+            key: JSON.parse(pubKey1),
+            format: 'jwk'
+          });
+          const enc1 = crypto.publicEncrypt(
+            { key: pubKeyObj1, oaepHash: 'sha256' },
+            channelKeyBytes
+          );
+          encryptedKey1 = enc1.toString('base64');
+        }
+        if (pubKey2 && usuarioId1 !== usuarioId2) {
+          const pubKeyObj2 = crypto.createPublicKey({
+            key: JSON.parse(pubKey2),
+            format: 'jwk'
+          });
+          const enc2 = crypto.publicEncrypt(
+            { key: pubKeyObj2, oaepHash: 'sha256' },
+            channelKeyBytes
+          );
+          encryptedKey2 = enc2.toString('base64');
+        }
+      }
+    } catch (err: any) {
+      console.error(`Failed to generate backend DM channel keys for users ${usuarioId1} & ${usuarioId2}:`, err.message);
+    }
+
+    await pool.query(
+      `INSERT INTO chat_canal_miembro (canal_id, usuario_id, encrypted_channel_key) VALUES (?, ?, ?)`,
+      [canalId, usuarioId1, encryptedKey1]
+    );
     if (usuarioId1 !== usuarioId2) {
-      await pool.query(`INSERT INTO chat_canal_miembro (canal_id, usuario_id) VALUES (?, ?)`, [canalId, usuarioId2]);
+      await pool.query(
+        `INSERT INTO chat_canal_miembro (canal_id, usuario_id, encrypted_channel_key) VALUES (?, ?, ?)`,
+        [canalId, usuarioId2, encryptedKey2]
+      );
     }
   }
 
