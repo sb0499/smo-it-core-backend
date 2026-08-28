@@ -5,10 +5,18 @@ import { decryptWithServerSecret, generateKeysForUser } from '../db/e2ee';
 import { config } from '../core/config';
 
 export const getUsuarios = async (req: AuthRequest, res: Response): Promise<void> => {
-  const skip = parseInt(req.query.skip as string) || 0;
-  const limit = parseInt(req.query.limit as string) || 100;
-  const usuarios = await usuarioService.getUsuarios(skip, limit);
-  res.json(usuarios);
+  const search = (req.query.search as string) || '';
+  if (req.query.page === undefined) {
+    const skip = parseInt(req.query.skip as string) || 0;
+    const limit = parseInt(req.query.limit as string) || 10000;
+    const usuarios = await usuarioService.getUsuarios(skip, limit, search);
+    res.json(usuarios);
+    return;
+  }
+  const page = parseInt(req.query.page as string) || 1;
+  const limit = parseInt(req.query.limit as string) || 10;
+  const result = await usuarioService.getUsuariosPaginated(page, limit, search);
+  res.json(result);
 };
 
 export const createUsuario = async (req: AuthRequest, res: Response): Promise<void> => {

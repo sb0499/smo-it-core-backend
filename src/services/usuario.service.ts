@@ -3,9 +3,18 @@ import { getPasswordHash } from '../utils/password';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { generateKeysForUser } from '../db/e2ee';
 
-export const getUsuarios = async (skip = 0, limit = 100) => {
-  const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT u.id, u.email, u.nombre_completo, u.is_active, u.created_at, u.updated_at,
+export const getUsuarios = async (skip = 0, limit = 100, search = '') => {
+  let whereClauses: string[] = [];
+  const params: any[] = [];
+  if (search) {
+    whereClauses.push(`(u.nombre_completo LIKE ? OR u.email LIKE ?)`);
+    const searchWildcard = `%${search}%`;
+    params.push(searchWildcard, searchWildcard);
+  }
+  const whereStr = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
+
+  const query = `
+    SELECT u.id, u.email, u.nombre_completo, u.is_active, u.created_at, u.updated_at,
             u.rol_id, r.nombre as rol_nombre, u.must_change_password, u.nivel_soporte, u.grupo_n2,
             GROUP_CONCAT(DISTINCT ue.empresa_id) as empresa_ids,
             GROUP_CONCAT(DISTINCT e_sop.nombre SEPARATOR ',') as empresa_nombres,
@@ -17,10 +26,13 @@ export const getUsuarios = async (skip = 0, limit = 100) => {
      LEFT JOIN empresa e_sop ON ue.empresa_id = e_sop.id
      LEFT JOIN usuario_empresa_inventario uei ON u.id = uei.usuario_id
      LEFT JOIN empresa e_inv ON uei.empresa_id = e_inv.id
+     ${whereStr}
      GROUP BY u.id
-     LIMIT ? OFFSET ?`,
-    [limit, skip]
-  );
+     LIMIT ? OFFSET ?
+  `;
+  params.push(limit, skip);
+
+  const [rows] = await pool.query<RowDataPacket[]>(query, params);
   return rows.map(u => ({
     ...u,
     rol: u.rol_nombre,
@@ -29,6 +41,59 @@ export const getUsuarios = async (skip = 0, limit = 100) => {
     empresa_inventario_ids: u.empresa_inventario_ids ? u.empresa_inventario_ids.split(',').map(Number) : [],
     empresa_inventario_nombres: u.empresa_inventario_nombres ? u.empresa_inventario_nombres.split(',') : []
   }));
+};
+
+export const getUsuariosPaginated = async (page = 1, limit = 10, search = '') => {
+  const skip = (page - 1) * limit;
+  let whereClauses: string[] = [];
+  const params: any[] = [];
+  if (search) {
+    whereClauses.push(`(u.nombre_completo LIKE ? OR u.email LIKE ?)`);
+    const searchWildcard = `%${search}%`;
+    params.push(searchWildcard, searchWildcard);
+  }
+  const whereStr = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
+
+  // Get total count
+  const countQuery = `
+    SELECT COUNT(DISTINCT u.id) as count 
+    FROM usuario u
+    JOIN rol r ON u.rol_id = r.id
+    ${whereStr}
+  `;
+  const [countRows] = await pool.query<RowDataPacket[]>(countQuery, params);
+  const total = countRows[0]?.count || 0;
+
+  // Get paginated data
+  const dataQuery = `
+    SELECT u.id, u.email, u.nombre_completo, u.is_active, u.created_at, u.updated_at,
+            u.rol_id, r.nombre as rol_nombre, u.must_change_password, u.nivel_soporte, u.grupo_n2,
+            GROUP_CONCAT(DISTINCT ue.empresa_id) as empresa_ids,
+            GROUP_CONCAT(DISTINCT e_sop.nombre SEPARATOR ',') as empresa_nombres,
+            GROUP_CONCAT(DISTINCT uei.empresa_id) as empresa_inventario_ids,
+            GROUP_CONCAT(DISTINCT e_inv.nombre SEPARATOR ',') as empresa_inventario_nombres
+     FROM usuario u
+     JOIN rol r ON u.rol_id = r.id
+     LEFT JOIN usuario_empresa ue ON u.id = ue.usuario_id
+     LEFT JOIN empresa e_sop ON ue.empresa_id = e_sop.id
+     LEFT JOIN usuario_empresa_inventario uei ON u.id = uei.usuario_id
+     LEFT JOIN empresa e_inv ON uei.empresa_id = e_inv.id
+     ${whereStr}
+     GROUP BY u.id
+     ORDER BY u.nombre_completo ASC
+     LIMIT ? OFFSET ?
+  `;
+  const [dataRows] = await pool.query<RowDataPacket[]>(dataQuery, [...params, limit, skip]);
+  const data = dataRows.map(u => ({
+    ...u,
+    rol: u.rol_nombre,
+    empresa_ids: u.empresa_ids ? u.empresa_ids.split(',').map(Number) : [],
+    empresa_nombres: u.empresa_nombres ? u.empresa_nombres.split(',') : [],
+    empresa_inventario_ids: u.empresa_inventario_ids ? u.empresa_inventario_ids.split(',').map(Number) : [],
+    empresa_inventario_nombres: u.empresa_inventario_nombres ? u.empresa_inventario_nombres.split(',') : []
+  }));
+
+  return { total, page, limit, data };
 };
 
 export const getUsuarioByEmail = async (email: string) => {
