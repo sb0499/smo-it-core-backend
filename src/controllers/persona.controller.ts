@@ -3,10 +3,18 @@ import { AuthRequest } from '../middlewares/auth.middleware';
 import * as personaService from '../services/persona.service';
 
 export const getPersonas = async (req: AuthRequest, res: Response): Promise<void> => {
-  const skip = parseInt(req.query.skip as string) || 0;
-  const limit = parseInt(req.query.limit as string) || 100;
-  const personas = await personaService.getPersonas(skip, limit);
-  res.json(personas);
+  const search = (req.query.search as string) || '';
+  if (req.query.page === undefined) {
+    const skip = parseInt(req.query.skip as string) || 0;
+    const limit = parseInt(req.query.limit as string) || 10000;
+    const personas = await personaService.getPersonas(skip, limit, search);
+    res.json(personas);
+    return;
+  }
+  const page = parseInt(req.query.page as string) || 1;
+  const limit = parseInt(req.query.limit as string) || 10;
+  const result = await personaService.getPersonasPaginated(page, limit, search);
+  res.json(result);
 };
 
 export const createPersona = async (req: AuthRequest, res: Response): Promise<void> => {

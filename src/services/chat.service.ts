@@ -1,6 +1,7 @@
 import { pool } from '../db/connection';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
-import { syncMemberChannelKey } from '../db/e2ee';
+import { syncMemberChannelKey, encryptWithServerSecret, decryptWithServerSecret } from '../db/e2ee';
+import { config } from '../core/config';
 import crypto from 'crypto';
 
 export const getCanalById = async (canalId: number, usuarioId: number) => {
@@ -253,6 +254,18 @@ export const getCanalMensajes = async (canalId: number, usuarioId: number, userR
      ORDER BY m.created_at ASC`,
     [canalId]
   );
+
+  const serverSecret = config.JWT_SECRET || 'default-secret-key-smo-it-core';
+  for (const row of rows) {
+    if (row.mensaje) {
+      try {
+        row.mensaje = decryptWithServerSecret(row.mensaje, serverSecret);
+      } catch (err) {
+        // Fallback for legacy or unencrypted messages
+      }
+    }
+  }
+
   return rows;
 };
 
@@ -279,9 +292,12 @@ export const addMensaje = async (
     }
   }
 
+  const serverSecret = config.JWT_SECRET || 'default-secret-key-smo-it-core';
+  const encryptedMensaje = encryptWithServerSecret(mensaje || '', serverSecret);
+
   const [result] = await pool.query<ResultSetHeader>(
     `INSERT INTO chat_mensaje (canal_id, usuario_id, mensaje, archivo_nombre, archivo_ruta, archivo_mimetype) VALUES (?, ?, ?, ?, ?, ?)`,
-    [canalId, usuarioId, mensaje || '', archivoNombre || null, archivoRuta || null, archivoMimetype || null]
+    [canalId, usuarioId, encryptedMensaje, archivoNombre || null, archivoRuta || null, archivoMimetype || null]
   );
 
   const [inserted] = await pool.query<RowDataPacket[]>(
@@ -291,5 +307,15 @@ export const addMensaje = async (
      WHERE m.id = ?`,
     [result.insertId]
   );
-  return inserted[0];
+
+  const row = inserted[0];
+  if (row && row.mensaje) {
+    try {
+      row.mensaje = decryptWithServerSecret(row.mensaje, serverSecret);
+    } catch (err) {
+      // Fallback
+    }
+  }
+
+  return row;
 };

@@ -2,9 +2,17 @@ import { Response } from 'express';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import * as proveedorService from '../services/proveedor.service';
 
-export const getProveedores = async (_req: AuthRequest, res: Response): Promise<void> => {
-  const proveedores = await proveedorService.getProveedores();
-  res.json(proveedores);
+export const getProveedores = async (req: AuthRequest, res: Response): Promise<void> => {
+  const search = (req.query.search as string) || '';
+  if (req.query.page === undefined) {
+    const proveedores = await proveedorService.getProveedores(search);
+    res.json(proveedores);
+    return;
+  }
+  const page = parseInt(req.query.page as string) || 1;
+  const limit = parseInt(req.query.limit as string) || 10;
+  const result = await proveedorService.getProveedoresPaginated(page, limit, search);
+  res.json(result);
 };
 
 export const getProveedorById = async (req: AuthRequest, res: Response): Promise<void> => {

@@ -1,12 +1,59 @@
 import { pool } from '../db/connection';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
 
-export const getPersonas = async (skip = 0, limit = 100) => {
-  const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT p.*, e.nombre as empresa_nombre FROM persona p JOIN empresa e ON p.empresa_id = e.id LIMIT ? OFFSET ?`,
-    [limit, skip]
-  );
+export const getPersonas = async (skip = 0, limit = 100, search = '') => {
+  let query = `SELECT p.*, e.nombre as empresa_nombre FROM persona p JOIN empresa e ON p.empresa_id = e.id`;
+  const params: any[] = [];
+  if (search) {
+    query += ` WHERE p.nombre LIKE ? OR p.cedula LIKE ? OR p.departamento LIKE ? OR p.cargo LIKE ? OR e.nombre LIKE ?`;
+    const searchWildcard = `%${search}%`;
+    params.push(searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard);
+  }
+  query += ` LIMIT ? OFFSET ?`;
+  params.push(limit, skip);
+
+  const [rows] = await pool.query<RowDataPacket[]>(query, params);
   return rows;
+};
+
+export const getPersonasPaginated = async (page = 1, limit = 10, search = '') => {
+  const skip = (page - 1) * limit;
+  let whereClauses: string[] = [];
+  const params: any[] = [];
+
+  if (search) {
+    const searchWildcard = `%${search}%`;
+    whereClauses.push(`(p.nombre LIKE ? OR p.cedula LIKE ? OR p.departamento LIKE ? OR p.cargo LIKE ? OR e.nombre LIKE ?)`);
+    params.push(searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard);
+  }
+
+  const whereStr = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
+
+  const countQuery = `
+    SELECT COUNT(*) as count 
+    FROM persona p 
+    JOIN empresa e ON p.empresa_id = e.id
+    ${whereStr}
+  `;
+  const [countRows] = await pool.query<RowDataPacket[]>(countQuery, params);
+  const total = countRows[0]?.count || 0;
+
+  const dataQuery = `
+    SELECT p.*, e.nombre as empresa_nombre 
+    FROM persona p 
+    JOIN empresa e ON p.empresa_id = e.id
+    ${whereStr}
+    ORDER BY p.nombre ASC
+    LIMIT ? OFFSET ?
+  `;
+  const [dataRows] = await pool.query<RowDataPacket[]>(dataQuery, [...params, limit, skip]);
+
+  return {
+    total,
+    page,
+    limit,
+    data: dataRows
+  };
 };
 
 export const getPersonaByCedula = async (cedula: string) => {
