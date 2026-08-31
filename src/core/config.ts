@@ -7,10 +7,10 @@ export const config = {
   VERSION: "1.0.0",
   API_V1_STR: "/api/v1",
   
-  DB_HOST: process.env.DB_HOST || "localhost",
+  DB_HOST: process.env.DB_HOST || "127.0.0.1",
   DB_USER: process.env.DB_USER || "root",
   DB_PASSWORD: process.env.DB_PASSWORD !== undefined ? process.env.DB_PASSWORD : "",
-  DB_NAME: process.env.DB_NAME || "vehiculos_db",
+  DB_NAME: process.env.DB_NAME || "smo_it_core",
   DB_PORT: parseInt(process.env.DB_PORT || "3306", 10),
   
   JWT_SECRET: process.env.JWT_SECRET || "fallback_secret",
