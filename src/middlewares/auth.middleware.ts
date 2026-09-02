@@ -10,6 +10,11 @@ export interface AuthRequest extends Request {
 
 export const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
+    if (req.method === 'OPTIONS') {
+      next();
+      return;
+    }
+
     let token = '';
     const authHeader = req.headers.authorization;
     
@@ -59,6 +64,11 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
 
 export const requireRoles = (roles: string[]) => {
   return (req: AuthRequest, res: Response, next: NextFunction): void => {
+    if (req.method === 'OPTIONS') {
+      next();
+      return;
+    }
+
     if (!req.user) {
       res.status(401).json({ detail: 'No autenticado' });
       return;
