@@ -1,15 +1,15 @@
 import { pool } from '../db/connection';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
 
-export const getPersonas = async (skip = 0, limit = 100, search = '') => {
-  let query = `SELECT p.*, e.nombre as empresa_nombre FROM persona p JOIN empresa e ON p.empresa_id = e.id`;
+export const getPersonas = async (skip = 0, limit = 1000, search = '') => {
+  let query = `SELECT p.*, e.nombre as empresa_nombre FROM persona p LEFT JOIN empresa e ON p.empresa_id = e.id`;
   const params: any[] = [];
   if (search) {
     query += ` WHERE p.nombre LIKE ? OR p.cedula LIKE ? OR p.departamento LIKE ? OR p.cargo LIKE ? OR e.nombre LIKE ?`;
     const searchWildcard = `%${search}%`;
     params.push(searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard);
   }
-  query += ` LIMIT ? OFFSET ?`;
+  query += ` ORDER BY p.nombre ASC LIMIT ? OFFSET ?`;
   params.push(limit, skip);
 
   const [rows] = await pool.query<RowDataPacket[]>(query, params);
@@ -32,7 +32,7 @@ export const getPersonasPaginated = async (page = 1, limit = 10, search = '') =>
   const countQuery = `
     SELECT COUNT(*) as count 
     FROM persona p 
-    JOIN empresa e ON p.empresa_id = e.id
+    LEFT JOIN empresa e ON p.empresa_id = e.id
     ${whereStr}
   `;
   const [countRows] = await pool.query<RowDataPacket[]>(countQuery, params);
@@ -41,7 +41,7 @@ export const getPersonasPaginated = async (page = 1, limit = 10, search = '') =>
   const dataQuery = `
     SELECT p.*, e.nombre as empresa_nombre 
     FROM persona p 
-    JOIN empresa e ON p.empresa_id = e.id
+    LEFT JOIN empresa e ON p.empresa_id = e.id
     ${whereStr}
     ORDER BY p.nombre ASC
     LIMIT ? OFFSET ?

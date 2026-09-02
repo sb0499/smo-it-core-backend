@@ -31,14 +31,14 @@ export const getActivos = async (
   if (custodioId && custodioId > 0) {
     const [colsActivo] = await pool.query<RowDataPacket[]>('SHOW COLUMNS FROM activo');
     const fieldNames = colsActivo.map((c: any) => c.Field);
-    const clauses: string[] = ['eb.custodio_id = ?'];
+    const clauses: string[] = ['(a.estado = \'Asignado\' AND eb.custodio_id = ? AND a.egreso_bodega_id IS NOT NULL)'];
     params.push(custodioId);
     if (fieldNames.includes('persona_id')) {
-      clauses.push('a.persona_id = ?');
+      clauses.push('(a.persona_id = ? AND a.estado = \'Asignado\')');
       params.push(custodioId);
     }
     if (fieldNames.includes('custodio_id')) {
-      clauses.push('a.custodio_id = ?');
+      clauses.push('(a.custodio_id = ? AND a.estado = \'Asignado\')');
       params.push(custodioId);
     }
     whereClauses.push(`(${clauses.join(' OR ')})`);
