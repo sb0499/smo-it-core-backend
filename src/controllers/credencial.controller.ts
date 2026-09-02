@@ -116,11 +116,11 @@ export const descargarPDF = async (req: AuthRequest, res: Response): Promise<voi
     }
 
     const pdfBuffer = await generarActaCredenciales(entrega, version);
-    const versionLabel = version === 'ti' ? 'TI' : 'Usuario';
-    const nombreArchivo = `Acta_Credenciales_${entrega.secuencial}_${versionLabel}.pdf`;
+    const versionSuffix = version === 'ti' ? '_TI' : '';
+    const nombreArchivo = `${entrega.secuencial}${versionSuffix}.pdf`;
     
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${nombreArchivo}"`);
+    res.setHeader('Content-Disposition', `inline; filename="${nombreArchivo}"`);
     res.send(pdfBuffer);
   } catch (error: any) {
     res.status(500).json({ detail: 'Error al generar PDF de entrega', error: error.message });

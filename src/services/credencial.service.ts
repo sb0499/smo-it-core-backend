@@ -67,48 +67,71 @@ export const getEntregaById = async (id: number, currentUser?: any) => {
   return entry;
 };
 
-export const getNextSecuencial = async (empresaId: number, fechaStr: string): Promise<string> => {
-  const [empresaRows] = await pool.query<RowDataPacket[]>(
-    `SELECT nombre FROM empresa WHERE id = ?`, [empresaId]
-  );
-  if (empresaRows.length === 0) {
-    throw new Error('Empresa no encontrada');
-  }
-  const ccName = empresaRows[0].nombre.toUpperCase();
-  
-  // Abbreviation map
-  const ccMap: Record<string, string> = {
+export const getEmpresaAbbr = (nombreEmpresa: string): string => {
+  const n = String(nombreEmpresa || '').toUpperCase().trim();
+  const map: Record<string, string> = {
     'CONDADO': 'CON',
+    'CONDADO SHOPPING': 'CON',
     'SCALA': 'SCA',
+    'SCALA SHOPPING': 'SCA',
     'POMASQUI': 'POM',
     'CCI': 'CCI',
     'SMO': 'SMO',
+    'SHOPPING MANAGEMENTS OPERADORA': 'SMO',
     'PORTOSHOPPING': 'POR',
     'GAMETOWN': 'GAM',
     'APPARCA': 'APP',
     'DATATRUST': 'DAT',
     'EL TEATRO': 'TEA'
   };
-  const ccAbbr = ccMap[ccName] || ccName.substring(0, 3);
 
-  // Parse date components
-  const date = new Date(fechaStr + 'T12:00:00');
-  const yy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
+  if (map[n]) return map[n];
 
-  // Count existing deliveries for this CC in the same year
-  const [countRows] = await pool.query<RowDataPacket[]>(
-    `SELECT COUNT(*) as total FROM entrega_credencial 
-     WHERE empresa_id = ? AND YEAR(fecha_entrega) = ?`,
-    [empresaId, yy]
+  const words = n.split(/\s+/).filter((w) => w.length > 0);
+  if (words.length >= 3) {
+    return (words[0][0] + words[1][0] + words[2][0]).toUpperCase();
+  } else if (words.length === 2) {
+    return (words[0][0] + words[1][0] + words[1][1]).toUpperCase();
+  } else if (words.length === 1 && words[0].length >= 3) {
+    return words[0].substring(0, 3).toUpperCase();
+  }
+  return 'SMO';
+};
+
+export const getNextSecuencial = async (empresaId: number, fechaStr?: string): Promise<string> => {
+  const [empresaRows] = await pool.query<RowDataPacket[]>(
+    `SELECT nombre FROM empresa WHERE id = ?`, [empresaId]
   );
-  
-  const count = (countRows[0]?.total || 0) + 1;
-  const seq = String(count).padStart(3, '0');
+  if (empresaRows.length === 0) {
+    throw new Error('Empresa no encontrada');
+  }
+  const ccAbbr = getEmpresaAbbr(empresaRows[0].nombre);
+  const prefix = `TI-${ccAbbr}-EC`;
 
-  // SI-SCA-0926004-2026
-  return `SI-${ccAbbr}-${mm}${dd}${seq}-${yy}`;
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT secuencial FROM entrega_credencial WHERE empresa_id = ? OR secuencial LIKE ?`,
+    [empresaId, `${prefix}-%`]
+  );
+
+  let maxSeq = 0;
+  for (const row of rows) {
+    if (row.secuencial) {
+      const parts = row.secuencial.split('-');
+      const lastPart = parts[parts.length - 1];
+      const seq = parseInt(lastPart, 10);
+      if (!isNaN(seq) && seq > maxSeq) {
+        maxSeq = seq;
+      }
+    }
+  }
+
+  // Fallback to row count + 1 if no matching seq parsed
+  if (maxSeq === 0) {
+    maxSeq = rows.length;
+  }
+
+  const nextSeq = String(maxSeq + 1).padStart(4, '0');
+  return `${prefix}-${nextSeq}`;
 };
 
 export const createEntrega = async (data: {
