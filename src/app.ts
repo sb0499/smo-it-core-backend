@@ -39,7 +39,7 @@ const swaggerOptions: swaggerJsdoc.Options = {
     info: {
       title: config.PROJECT_NAME,
       version: config.VERSION,
-      description: 'API REST del sistema IT CORE de SMO'
+      description: 'API REST del sistema TISMO'
     },
     servers: [{ url: `http://localhost:${config.PORT}`, description: 'Servidor de desarrollo' }],
     components: {
