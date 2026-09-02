@@ -2,10 +2,19 @@ import { Response } from 'express';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import * as service from '../services/tipo-equipo.service';
 
-export const getTipoEquipos = async (_req: AuthRequest, res: Response): Promise<void> => {
+export const getTipoEquipos = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const list = await service.getTipoEquipos();
-    res.json(list);
+    const { page, limit, search } = req.query;
+    if (page && limit) {
+      const pageNum = parseInt(String(page), 10) || 1;
+      const limitNum = parseInt(String(limit), 10) || 10;
+      const searchStr = search ? String(search) : '';
+      const result = await service.getTipoEquipos(pageNum, limitNum, searchStr);
+      res.json(result);
+    } else {
+      const list = await service.getTipoEquipos();
+      res.json(list);
+    }
   } catch (error: any) {
     res.status(500).json({ detail: 'Error al obtener tipos de equipo', error: error.message });
   }

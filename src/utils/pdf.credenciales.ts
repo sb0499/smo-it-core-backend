@@ -106,33 +106,10 @@ export const generarActaCredenciales = (entrega: any, version: 'usuario' | 'ti')
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    // Left Header Title
-    doc.fillColor('#111827')
-       .fontSize(11)
-       .font('Helvetica-Bold')
-       .text('TECNOLOGÍA DE LA INFORMACIÓN', 50, 45, { underline: true })
-       .text('SHOPPING MANAGEMENTS OPERADORA', 50, 60, { underline: true });
-
-    // Right Ribbon Logo
-    const cleanCompanyName = String(entrega.empresa_nombre)
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/\s+/g, '-')
-      .replace(/[^a-z0-9\-]/g, '');
-
-    const specificLogoPath = path.join(__dirname, '..', 'assets', `logo-${cleanCompanyName}.png`);
+    // 1. Esquina superior derecha: logo-shopping.png (fijo)
     const defaultLogoPath = path.join(__dirname, '..', 'assets', 'logo-shopping.png');
-
-    let logoToUse = '';
-    if (fs.existsSync(specificLogoPath)) {
-      logoToUse = specificLogoPath;
-    } else if (fs.existsSync(defaultLogoPath)) {
-      logoToUse = defaultLogoPath;
-    }
-
-    if (logoToUse) {
-      doc.image(logoToUse, 425, 45, { width: 120 });
+    if (fs.existsSync(defaultLogoPath)) {
+      doc.image(defaultLogoPath, 395, 25, { width: 150 });
     } else {
       doc.save();
       doc.fillColor('#304d69'); // Slate blue of shoppingmanagements logo
@@ -156,6 +133,21 @@ export const generarActaCredenciales = (entrega: any, version: 'usuario' | 'ti')
          .font('Helvetica-Bold')
          .text('shoppingmanagements', 435, 58, { width: 97, align: 'center' });
       doc.restore();
+    }
+
+    // 2. Esquina superior izquierda: logo-nombresede.png si existe (si no existe se deja vacío)
+    const cleanCompanyName = String(entrega.empresa_nombre || '')
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9\-]/g, '');
+
+    const isShoppingMain = !cleanCompanyName || cleanCompanyName === 'shopping' || cleanCompanyName === 'shopping-managements';
+    const specificLogoPath = path.join(__dirname, '..', 'assets', `logo-${cleanCompanyName}.png`);
+
+    if (!isShoppingMain && fs.existsSync(specificLogoPath)) {
+      doc.image(specificLogoPath, 50, 25, { fit: [120, 65] });
     }
 
     // Safe Date Parsing for top header date

@@ -1,6 +1,42 @@
 import PDFDocument from 'pdfkit';
 import path from 'path';
 import fs from 'fs';
+import { getEmpresaAbbr } from '../services/credencial.service';
+
+function renderActaHeaderLogos(
+  doc: InstanceType<typeof PDFDocument>,
+  empresaNombre?: string,
+  options: { leftX?: number; rightX?: number; topY?: number; logoWidth?: number } = {}
+) {
+  const leftX = options.leftX ?? 40;
+  const rightX = options.rightX ?? 395;
+  const topY = options.topY ?? 25;
+  const logoWidth = options.logoWidth ?? 150;
+
+  // 1. Esquina superior derecha: logo-shopping.png (fijo)
+  const shoppingLogoPath = path.join(__dirname, '..', 'assets', 'logo-shopping.png');
+  if (fs.existsSync(shoppingLogoPath)) {
+    doc.image(shoppingLogoPath, rightX, topY, { width: logoWidth });
+  }
+
+  // 2. Esquina superior izquierda: logo-nombresede.png si existe (si no existe se deja vacío)
+  const cleanSedeName = String(empresaNombre || '')
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9\-]/g, '');
+
+  const isShoppingMain = !cleanSedeName || cleanSedeName === 'shopping' || cleanSedeName === 'shopping-managements';
+  const specificLogoPath = path.join(__dirname, '..', 'assets', `logo-${cleanSedeName}.png`);
+
+  if (!isShoppingMain && fs.existsSync(specificLogoPath)) {
+    doc.image(specificLogoPath, leftX, topY, { fit: [120, 65] });
+  }
+
+  // Desplazar Y debajo de los logos para evitar que el texto o fecha se solapen con las imágenes
+  doc.y = 105;
+}
 
 export const generarActaMovimiento = (movimiento: any): Promise<Buffer> => {
   return new Promise((resolve, reject) => {
@@ -11,10 +47,8 @@ export const generarActaMovimiento = (movimiento: any): Promise<Buffer> => {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    // Encabezado institucional
-    doc.fillColor('#1e3a8a').fontSize(22).font('Helvetica-Bold').text('TISMO');
-    doc.fillColor('#4b5563').fontSize(12).font('Helvetica').text('SHOPPING MANAGEMENTS OPERADORA');
-    doc.fillColor('#9ca3af').fontSize(10).text('DEPARTAMENTO DE TI');
+    // Encabezado institucional con logos
+    renderActaHeaderLogos(doc, movimiento.empresa_nombre || movimiento.sede_nombre, { leftX: 50, rightX: 425, topY: 30, logoWidth: 120 });
 
     // Número de acta y fecha
     doc.moveUp(3);
@@ -107,40 +141,8 @@ export const generarActaIngreso = (ingreso: any): Promise<Buffer> => {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    // (Page border removed as requested)
-
-    // Top Header Section (Vector TISMO Logo - Black Version)
-    doc.save();
-    doc.translate(192, 18);
-    doc.scale(0.7);
-
-    // Shield Outline
-    doc.path('M50 16 L80 26 V52 C80 69 68 82 50 87 C32 82 20 69 20 52 V26 Z')
-       .lineWidth(4)
-       .strokeColor('#002B49')
-       .stroke();
-
-    // T-Bar & Nodes
-    doc.path('M35 36 H65')
-       .lineWidth(4)
-       .strokeColor('#002B49')
-       .stroke();
-
-    doc.circle(35, 36, 3).fill('#002B49');
-    doc.circle(65, 36, 3).fill('#002B49');
-    doc.circle(50, 27, 3).fill('#002B49');
-    doc.moveTo(50, 27).lineTo(50, 40).lineWidth(2).strokeColor('#002B49').stroke();
-
-    // Server Racks
-    doc.roundedRect(40, 46, 5, 16, 2).fill('#002B49');
-    doc.roundedRect(47.5, 42, 5, 26, 2).fill('#002B49');
-    doc.roundedRect(55, 51, 5, 11, 2).fill('#002B49');
-
-    // Text: TISMO & Subtitles
-    doc.font('Helvetica-Bold').fontSize(30).fillColor('#002B49').text('TISMO', 95, 20, { lineBreak: false });
-    doc.font('Helvetica-Bold').fontSize(10).fillColor('#002B49').text('SISTEMA DE GESTIÓN TI', 95, 50, { lineBreak: false });
-    doc.font('Helvetica').fontSize(7.5).fillColor('#475569').text('SHOPPING MANAGEMENT OPERADORA', 95, 64, { lineBreak: false });
-    doc.restore();
+    // Header section with logos
+    renderActaHeaderLogos(doc, ingreso.empresa_nombre, { leftX: 30, rightX: 440, topY: 20, logoWidth: 110 });
 
     // Green Banner Box "INGRESO DE BODEGA"
     const bannerY = 96;
@@ -293,38 +295,8 @@ export const generarActaEgreso = (egreso: any): Promise<Buffer> => {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    // Top Header Section (Vector TISMO Logo - Black Version)
-    doc.save();
-    doc.translate(192, 18);
-    doc.scale(0.7);
-
-    // Shield Outline
-    doc.path('M50 16 L80 26 V52 C80 69 68 82 50 87 C32 82 20 69 20 52 V26 Z')
-       .lineWidth(4)
-       .strokeColor('#002B49')
-       .stroke();
-
-    // T-Bar & Nodes
-    doc.path('M35 36 H65')
-       .lineWidth(4)
-       .strokeColor('#002B49')
-       .stroke();
-
-    doc.circle(35, 36, 3).fill('#002B49');
-    doc.circle(65, 36, 3).fill('#002B49');
-    doc.circle(50, 27, 3).fill('#002B49');
-    doc.moveTo(50, 27).lineTo(50, 40).lineWidth(2).strokeColor('#002B49').stroke();
-
-    // Server Racks
-    doc.roundedRect(40, 46, 5, 16, 2).fill('#002B49');
-    doc.roundedRect(47.5, 42, 5, 26, 2).fill('#002B49');
-    doc.roundedRect(55, 51, 5, 11, 2).fill('#002B49');
-
-    // Text: TISMO & Subtitles
-    doc.font('Helvetica-Bold').fontSize(30).fillColor('#002B49').text('TISMO', 95, 20, { lineBreak: false });
-    doc.font('Helvetica-Bold').fontSize(10).fillColor('#002B49').text('SISTEMA DE GESTIÓN TI', 95, 50, { lineBreak: false });
-    doc.font('Helvetica').fontSize(7.5).fillColor('#475569').text('SHOPPING MANAGEMENT OPERADORA', 95, 64, { lineBreak: false });
-    doc.restore();
+    // Header section with logos
+    renderActaHeaderLogos(doc, egreso.empresa_nombre, { leftX: 30, rightX: 440, topY: 20, logoWidth: 110 });
 
     // Red Banner Box "EGRESO DE BODEGA"
     const bannerY = 96;
@@ -487,25 +459,19 @@ export const generarActaEntregaEgreso = (egreso: any): Promise<Buffer> => {
     const anioNum = fechaObj.getFullYear();
     const fechaFormattedStr = `Quito, ${String(diaNum).padStart(2, '0')} de ${mesNombre} de ${anioNum}`;
 
-    // Extract initials for code SIS-SCA-2026
+    // Extract code TI-INICIALES-AE-NUMERACION
     const empresaNombre = egreso.empresa_nombre || 'SMO';
-    const words = empresaNombre.trim().split(/\s+/).filter((w: string) => w.length > 0);
-    let initials = 'SCA';
-    if (words.length >= 2) {
-      initials = (words[0][0] + words[1][0]).toUpperCase();
-    } else if (words.length === 1) {
-      initials = words[0].substring(0, 3).toUpperCase();
-    }
-    const codigoEntrega = `SIS-${initials}-${anioNum}`;
+    const ccAbbr = getEmpresaAbbr(empresaNombre);
+    const codigoEntrega = egreso.codigo_egreso && egreso.codigo_egreso.startsWith('TI-') 
+      ? egreso.codigo_egreso 
+      : `TI-${ccAbbr}-AE-${String(egreso.id || 1).padStart(4, '0')}`;
 
-    // Header Title
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000').text('SISTEMAS', { align: 'center' });
-    doc.text('SHOPPING MANAGEMENTS OPERADORA', { align: 'center' });
-    doc.moveDown(1.5);
+    // Header section with logos (logo-shopping rightX 395 width 150, logo-sede fit 120x65 leftX 40)
+    renderActaHeaderLogos(doc, egreso.empresa_nombre, { leftX: 40, rightX: 395, topY: 25, logoWidth: 150 });
 
-    // Date
-    doc.font('Helvetica').fontSize(9.5).text(fechaFormattedStr, 40, doc.y);
-    doc.moveDown(1.5);
+    // Date (positioned safely below header logos at y = 105)
+    doc.font('Helvetica').fontSize(9.5).fillColor('#000000').text(fechaFormattedStr, 40, doc.y);
+    doc.moveDown(1.2);
 
     // Code & Title
     doc.font('Helvetica-Bold').fontSize(10).text(codigoEntrega, { align: 'center' });
@@ -613,6 +579,126 @@ export const generarActaEntregaEgreso = (egreso: any): Promise<Buffer> => {
     doc.font('Helvetica-Bold').fontSize(8.5).text(recibidoNombre, 335, signatureY + 5, { width: 190, align: 'left' });
     doc.font('Helvetica-Bold').fontSize(8).text('RECIBE CONFORME', 335, signatureY + 16, { width: 190, align: 'left' });
     doc.font('Helvetica-Bold').fontSize(8).text(recibidoArea, 335, signatureY + 27, { width: 190, align: 'left' });
+
+    doc.end();
+  });
+};
+
+export const generarActaRecepcion = (recepcion: any): Promise<Buffer> => {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 40, size: 'A4' });
+    const chunks: Buffer[] = [];
+
+    doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    const fechaObj = recepcion.fecha_recepcion ? new Date(recepcion.fecha_recepcion) : new Date(recepcion.created_at || Date.now());
+    const meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    const diaNum = fechaObj.getDate();
+    const mesNombre = meses[fechaObj.getMonth()];
+    const anioNum = fechaObj.getFullYear();
+    const fechaFormattedStr = `Quito, ${String(diaNum).padStart(2, '0')} de ${mesNombre} de ${anioNum}`;
+
+    const codigoRecepcion = recepcion.codigo_recepcion || 'TI-AR-0001';
+
+    renderActaHeaderLogos(doc, recepcion.empresa_nombre, { leftX: 40, rightX: 395, topY: 25, logoWidth: 150 });
+
+    doc.font('Helvetica').fontSize(9.5).fillColor('#000000').text(fechaFormattedStr, 40, doc.y);
+    doc.moveDown(1.2);
+
+    doc.font('Helvetica-Bold').fontSize(10).text(codigoRecepcion, { align: 'center' });
+    doc.moveDown(0.8);
+    doc.font('Helvetica-Bold').fontSize(11).text('ACTA DE RECEPCIÓN DE ACTIVOS', { align: 'center' });
+    doc.moveDown(1.2);
+
+    const sedeNombre = (recepcion.empresa_nombre || 'SHOPPING MANAGEMENTS OPERADORA').toUpperCase();
+    const personaEntregaNombre = (recepcion.persona_entrega_nombre || 'N/A').toUpperCase();
+    doc.font('Helvetica').fontSize(9).text(
+      `En las instalaciones de ${sedeNombre}, el funcionario ${personaEntregaNombre} procede a la entrega / devolución de los activos a la Coordinación de TI con el siguiente detalle:`,
+      40,
+      doc.y,
+      { width: 515, align: 'justify' }
+    );
+    doc.moveDown(1);
+
+    let tableStartY = doc.y;
+    const tColIndex = 40;
+    const tCol1 = 65;
+    const tCol2 = 155;
+    const tCol3 = 245;
+    const tCol4 = 375;
+    const tCol5 = 465;
+
+    doc.rect(40, tableStartY, 515, 20).fillAndStroke('#f3f4f6', '#000000');
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#000000');
+
+    doc.text('#', tColIndex, tableStartY + 5, { width: 25, align: 'center' });
+    doc.text('TIPO', tCol1, tableStartY + 5, { width: 90, align: 'center' });
+    doc.text('MARCA', tCol2, tableStartY + 5, { width: 90, align: 'center' });
+    doc.text('MODELO', tCol3, tableStartY + 5, { width: 130, align: 'center' });
+    doc.text('SERIE', tCol4, tableStartY + 5, { width: 90, align: 'center' });
+    doc.text('ESTADO', tCol5, tableStartY + 5, { width: 90, align: 'center' });
+
+    doc.moveTo(tCol1, tableStartY).lineTo(tCol1, tableStartY + 20).stroke();
+    doc.moveTo(tCol2, tableStartY).lineTo(tCol2, tableStartY + 20).stroke();
+    doc.moveTo(tCol3, tableStartY).lineTo(tCol3, tableStartY + 20).stroke();
+    doc.moveTo(tCol4, tableStartY).lineTo(tCol4, tableStartY + 20).stroke();
+    doc.moveTo(tCol5, tableStartY).lineTo(tCol5, tableStartY + 20).stroke();
+
+    let currentY = tableStartY + 20;
+    const activos = recepcion.activos || [];
+
+    activos.forEach((activo: any, index: number) => {
+      const rowH = 20;
+      doc.rect(40, currentY, 515, rowH).strokeColor('#000000').stroke();
+
+      doc.moveTo(tCol1, currentY).lineTo(tCol1, currentY + rowH).stroke();
+      doc.moveTo(tCol2, currentY).lineTo(tCol2, currentY + rowH).stroke();
+      doc.moveTo(tCol3, currentY).lineTo(tCol3, currentY + rowH).stroke();
+      doc.moveTo(tCol4, currentY).lineTo(tCol4, currentY + rowH).stroke();
+      doc.moveTo(tCol5, currentY).lineTo(tCol5, currentY + rowH).stroke();
+
+      doc.font('Helvetica').fontSize(8).fillColor('#000000');
+      doc.text(String(index + 1), tColIndex, currentY + 5, { width: 25, align: 'center' });
+      doc.text((activo.tipo_equipo_nombre || 'N/A').toUpperCase(), tCol1, currentY + 5, { width: 90, align: 'center' });
+      doc.text((activo.marca || 'N/A').toUpperCase(), tCol2, currentY + 5, { width: 90, align: 'center' });
+      doc.text((activo.modelo || 'N/A').toUpperCase(), tCol3, currentY + 5, { width: 130, align: 'center' });
+      doc.text((activo.serial || 'NA').toUpperCase(), tCol4, currentY + 5, { width: 90, align: 'center' });
+      doc.text('DEVUELTO', tCol5, currentY + 5, { width: 90, align: 'center' });
+
+      currentY += rowH;
+    });
+
+    currentY += 15;
+    doc.font('Helvetica-Bold').fontSize(9).fillColor('#000000').text('Observaciones / Motivo de Devolución:', 40, currentY);
+    currentY += 14;
+    doc.font('Helvetica').fontSize(8.5).text(recepcion.observaciones || 'Sin observaciones.', 40, currentY, { width: 515 });
+
+    currentY += 25;
+    doc.font('Helvetica').fontSize(8.5).text(
+      `En fe de conformidad y recepción de los activos descritos a bodega, se suscribe la presente acta en original y copia del mismo tenor y efecto en Quito a los ${diaNum} días del mes de ${mesNombre} de ${anioNum}.`,
+      40,
+      currentY,
+      { width: 515 }
+    );
+
+    const signatureY = currentY + 65;
+    const realizaNombre = personaEntregaNombre;
+    const realizaArea = (recepcion.area || recepcion.persona_entrega_cargo || 'EMPLEADO').toUpperCase();
+    const recibeNombre = (recepcion.recibido_por_nombre || 'SOPORTE TI').toUpperCase();
+
+    // Signature 1: ENTREGA CONFORME (Empleado que devuelve)
+    doc.moveTo(60, signatureY).lineTo(230, signatureY).strokeColor('#000000').lineWidth(1).stroke();
+    doc.font('Helvetica-Bold').fontSize(8.5).text(realizaNombre, 50, signatureY + 5, { width: 190, align: 'left' });
+    doc.font('Helvetica-Bold').fontSize(8).text('ENTREGA CONFORME', 50, signatureY + 16, { width: 190, align: 'left' });
+    doc.font('Helvetica-Bold').fontSize(8).text(realizaArea, 50, signatureY + 27, { width: 190, align: 'left' });
+
+    // Signature 2: RECIBE CONFORME (Sistema TI)
+    doc.moveTo(345, signatureY).lineTo(515, signatureY).strokeColor('#000000').lineWidth(1).stroke();
+    doc.font('Helvetica-Bold').fontSize(8.5).text(recibeNombre, 335, signatureY + 5, { width: 190, align: 'left' });
+    doc.font('Helvetica-Bold').fontSize(8).text('RECIBE CONFORME', 335, signatureY + 16, { width: 190, align: 'left' });
+    doc.font('Helvetica-Bold').fontSize(8).text('SISTEMAS / BODEGA TI', 335, signatureY + 27, { width: 190, align: 'left' });
 
     doc.end();
   });

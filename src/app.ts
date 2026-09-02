@@ -21,6 +21,7 @@ import { notificacionesRouter } from './routes/notificaciones.routes';
 import { tipoEquiposRouter } from './routes/tipo-equipos.routes';
 import { bodegasRouter } from './routes/bodegas.routes';
 import { credencialesRouter } from './routes/credenciales.routes';
+import { hostingsDominiosRouter } from './routes/hosting-dominio.routes';
 import path from 'path';
 
 const app = express();
@@ -80,6 +81,7 @@ app.use(`${API}/notificaciones`, notificacionesRouter);
 app.use(`${API}/tipo-equipos`, tipoEquiposRouter);
 app.use(`${API}/bodegas`, bodegasRouter);
 app.use(`${API}/credenciales`, credencialesRouter);
+app.use(`${API}/hostings-dominios`, hostingsDominiosRouter);
 
 // Root health check
 app.get('/', (_req, res) => {

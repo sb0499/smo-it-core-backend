@@ -34,9 +34,38 @@ export const generateUniqueAbbreviation = async (nombre: string): Promise<string
   }
 };
 
-export const getTipoEquipos = async () => {
-  const [rows] = await pool.query<RowDataPacket[]>('SELECT * FROM tipo_equipo ORDER BY nombre ASC');
-  return rows;
+export const getTipoEquipos = async (page?: number, limit?: number, search = '') => {
+  let whereClauses: string[] = [];
+  const params: any[] = [];
+
+  if (search) {
+    whereClauses.push('(nombre LIKE ? OR abreviacion LIKE ?)');
+    const searchWildcard = `%${search}%`;
+    params.push(searchWildcard, searchWildcard);
+  }
+
+  const whereStr = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
+
+  if (page && limit) {
+    const skip = (page - 1) * limit;
+
+    const countQuery = `SELECT COUNT(*) as count FROM tipo_equipo ${whereStr}`;
+    const [countRows] = await pool.query<RowDataPacket[]>(countQuery, params);
+    const total = countRows[0]?.count || 0;
+
+    const selectQuery = `SELECT * FROM tipo_equipo ${whereStr} ORDER BY nombre ASC LIMIT ? OFFSET ?`;
+    const [rows] = await pool.query<RowDataPacket[]>(selectQuery, [...params, limit, skip]);
+
+    return {
+      total,
+      page,
+      limit,
+      data: rows
+    };
+  } else {
+    const [rows] = await pool.query<RowDataPacket[]>(`SELECT * FROM tipo_equipo ${whereStr} ORDER BY nombre ASC`, params);
+    return rows;
+  }
 };
 
 export const createTipoEquipo = async (data: { nombre: string }) => {

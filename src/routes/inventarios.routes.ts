@@ -62,6 +62,13 @@ inventariosRouter.get('/egresos/:id', requireAuth, requireAdminOrTecnico, ctrl.g
 inventariosRouter.get('/egresos/:id/acta', requireAuth, requireAdminOrTecnico, ctrl.descargarActaEgreso);
 inventariosRouter.get('/egresos/:id/acta-entrega', requireAuth, requireAdminOrTecnico, ctrl.descargarActaEntregaEgreso);
 
+// Recepciones de Bodega (Actas de Recepción / Devolución de Personal)
+inventariosRouter.post('/recepciones', requireAuth, requireAdminOrTecnico, ctrl.createRecepcionBodega);
+inventariosRouter.get('/recepciones', requireAuth, requireAdminOrTecnico, ctrl.getRecepcionesBodega);
+inventariosRouter.get('/recepciones/:id', requireAuth, requireAdminOrTecnico, ctrl.getRecepcionBodegaById);
+inventariosRouter.get('/recepciones/:id/acta', requireAuth, requireAdminOrTecnico, ctrl.descargarActaRecepcion);
+inventariosRouter.get('/recepciones/:id/acta-ingreso', requireAuth, requireAdminOrTecnico, ctrl.descargarActaIngresoDevolucion);
+
 /**
  * @openapi
  * /api/v1/inventarios/movimientos/global:

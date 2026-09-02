@@ -3,7 +3,8 @@ import { AuthRequest } from '../middlewares/auth.middleware';
 import * as inventarioService from '../services/inventario.service';
 import { excelService } from '../services/excel.service';
 import { pool } from '../db/connection';
-import { generarActaMovimiento, generarActaIngreso, generarActaEgreso, generarActaEntregaEgreso } from '../utils/pdf.generator';
+import { generarActaMovimiento, generarActaIngreso, generarActaEgreso, generarActaEntregaEgreso, generarActaRecepcion } from '../utils/pdf.generator';
+import { getEmpresaAbbr } from '../services/credencial.service';
 import fs from 'fs';
 
 const getAssignedEmpresas = async (usuarioId: number): Promise<number[]> => {
@@ -20,15 +21,26 @@ export const getActivos = async (req: AuthRequest, res: Response): Promise<void>
     const limit = parseInt(req.query.limit as string) || 10;
     const search = (req.query.search as string) || '';
     const estado = (req.query.estado as string) || '';
-    
+    const custodioId = req.query.custodio_id ? parseInt(req.query.custodio_id as string) : undefined;
+    const empresaIdFilter = req.query.empresa_id ? parseInt(req.query.empresa_id as string) : undefined;
+
     let empresaIds: number[] | undefined = undefined;
-    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
+    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO' && !custodioId && !empresaIdFilter) {
       empresaIds = await getAssignedEmpresas(req.currentUser.id);
     }
 
-    const activosResult = await inventarioService.getActivos(page, limit, search, estado, empresaIds);
+    const activosResult = await inventarioService.getActivos(
+      page,
+      limit,
+      search,
+      estado,
+      empresaIds,
+      custodioId,
+      empresaIdFilter
+    );
     res.json(activosResult);
   } catch (error: any) {
+    console.error('Error in getActivos:', error);
     res.status(500).json({ detail: 'Error al obtener activos', error: error.message });
   }
 };
@@ -296,13 +308,27 @@ export const getIngresosBodega = async (req: AuthRequest, res: Response): Promis
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 10;
     const search = (req.query.search as string) || '';
+    const fechaDesde = (req.query.fecha_desde as string) || undefined;
+    const fechaHasta = (req.query.fecha_hasta as string) || undefined;
+    const empresaIdFilter = req.query.empresa_id ? parseInt(req.query.empresa_id as string) : undefined;
 
     let empresaIds: number[] | undefined = undefined;
+    let realizadoPorId: number | undefined = undefined;
     if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
       empresaIds = await getAssignedEmpresas(req.currentUser.id);
+      realizadoPorId = req.currentUser.id;
     }
 
-    const result = await inventarioService.getIngresosBodega(page, limit, search, empresaIds);
+    const result = await inventarioService.getIngresosBodega(
+      page,
+      limit,
+      search,
+      empresaIds,
+      fechaDesde,
+      fechaHasta,
+      empresaIdFilter,
+      realizadoPorId
+    );
     res.json(result);
   } catch (error: any) {
     res.status(500).json({ detail: 'Error al consultar ingresos de bodega', error: error.message });
@@ -379,13 +405,27 @@ export const getEgresosBodega = async (req: AuthRequest, res: Response): Promise
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 10;
     const search = (req.query.search as string) || '';
+    const fechaDesde = (req.query.fecha_desde as string) || undefined;
+    const fechaHasta = (req.query.fecha_hasta as string) || undefined;
+    const empresaIdFilter = req.query.empresa_id ? parseInt(req.query.empresa_id as string) : undefined;
 
     let empresaIds: number[] | undefined = undefined;
+    let realizadoPorId: number | undefined = undefined;
     if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
       empresaIds = await getAssignedEmpresas(req.currentUser.id);
+      realizadoPorId = req.currentUser.id;
     }
 
-    const result = await inventarioService.getEgresosBodega(page, limit, search, empresaIds);
+    const result = await inventarioService.getEgresosBodega(
+      page,
+      limit,
+      search,
+      empresaIds,
+      fechaDesde,
+      fechaHasta,
+      empresaIdFilter,
+      realizadoPorId
+    );
     res.json(result);
   } catch (error: any) {
     res.status(500).json({ detail: 'Error al consultar egresos de bodega', error: error.message });
@@ -426,9 +466,11 @@ export const descargarActaEgreso = async (req: AuthRequest, res: Response): Prom
       return;
     }
 
+    const codigo = await inventarioService.getEgresoCodigoFormatted(egreso);
+    egreso.codigo_egreso = codigo;
     const pdfBuffer = await generarActaEgreso(egreso);
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="Acta_Egreso_${egreso.codigo_egreso}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${codigo}.pdf"`);
     res.send(pdfBuffer);
   } catch (error: any) {
     res.status(500).json({ detail: 'Error al generar acta PDF de egreso', error: error.message });
@@ -449,12 +491,132 @@ export const descargarActaEntregaEgreso = async (req: AuthRequest, res: Response
       return;
     }
 
+    const codigo = await inventarioService.getEgresoCodigoFormatted(egreso);
+    egreso.codigo_egreso = codigo;
     const pdfBuffer = await generarActaEntregaEgreso(egreso);
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="Acta_Entrega_${egreso.codigo_egreso}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${codigo}.pdf"`);
     res.send(pdfBuffer);
   } catch (error: any) {
     res.status(500).json({ detail: 'Error al generar acta PDF de entrega', error: error.message });
+  }
+};
+
+export const createRecepcionBodega = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.currentUser) {
+      res.status(401).json({ detail: 'Usuario no autenticado' });
+      return;
+    }
+
+    const recepcion = await inventarioService.createRecepcionBodega(req.body, req.currentUser.id);
+    res.status(201).json(recepcion);
+  } catch (error: any) {
+    res.status(500).json({ detail: 'Error al registrar recepción de bodega', error: error.message });
+  }
+};
+
+export const getRecepcionesBodega = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const search = (req.query.search as string) || '';
+    const fechaDesde = (req.query.fecha_desde as string) || undefined;
+    const fechaHasta = (req.query.fecha_hasta as string) || undefined;
+    const empresaIdFilter = req.query.empresa_id ? parseInt(req.query.empresa_id as string) : undefined;
+
+    let realizadoPorId: number | undefined = undefined;
+    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
+      realizadoPorId = req.currentUser.id;
+    }
+
+    const result = await inventarioService.getRecepcionesBodega(
+      page,
+      limit,
+      search,
+      undefined,
+      fechaDesde,
+      fechaHasta,
+      empresaIdFilter,
+      realizadoPorId
+    );
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ detail: 'Error al consultar recepciones de bodega', error: error.message });
+  }
+};
+
+export const getRecepcionBodegaById = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      res.status(400).json({ detail: 'ID de recepción inválido' });
+      return;
+    }
+
+    const recepcion = await inventarioService.getRecepcionBodegaById(id);
+    if (!recepcion) {
+      res.status(404).json({ detail: 'Recepción de bodega no encontrada' });
+      return;
+    }
+
+    res.json(recepcion);
+  } catch (error: any) {
+    res.status(500).json({ detail: 'Error al obtener recepción de bodega', error: error.message });
+  }
+};
+
+export const descargarActaRecepcion = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      res.status(400).json({ detail: 'ID de recepción inválido' });
+      return;
+    }
+
+    const recepcion = await inventarioService.getRecepcionBodegaById(id);
+    if (!recepcion) {
+      res.status(404).json({ detail: 'Recepción de bodega no encontrada' });
+      return;
+    }
+
+    const pdfBuffer = await generarActaRecepcion(recepcion);
+    const codigo = recepcion.codigo_recepcion || `TI-AR-${id}`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${codigo}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (error: any) {
+    res.status(500).json({ detail: 'Error al generar acta PDF de recepción', error: error.message });
+  }
+};
+
+export const descargarActaIngresoDevolucion = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      res.status(400).json({ detail: 'ID de recepción inválido' });
+      return;
+    }
+
+    const recepcion = await inventarioService.getRecepcionBodegaById(id);
+    if (!recepcion || !recepcion.ingreso_bodega_id) {
+      res.status(404).json({ detail: 'Ingreso a bodega no encontrado para esta recepción' });
+      return;
+    }
+
+    const ingreso = await inventarioService.getIngresoBodegaById(recepcion.ingreso_bodega_id);
+    if (!ingreso) {
+      res.status(404).json({ detail: 'Ingreso de bodega no encontrado' });
+      return;
+    }
+
+    const pdfBuffer = await generarActaIngreso(ingreso);
+    const codigo = ingreso.codigo_ingreso || `IB-AR-${id}`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${codigo}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (error: any) {
+    res.status(500).json({ detail: 'Error al generar PDF de ingreso por devolución', error: error.message });
   }
 };
 
