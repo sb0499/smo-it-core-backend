@@ -198,6 +198,7 @@ export const deleteHostingDominio = async (id: number) => {
 export const verificarExpiracionesHostingsDominios = async () => {
   console.log('[Cron] Verificando vencimientos de Hostings y Dominios (Alerta <= 30 días)...');
   try {
+    await ensureTableExists();
     const query = `
       SELECT 
         hd.*,
