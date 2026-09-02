@@ -23,12 +23,40 @@ export interface HostingDominio {
   estado_vencimiento?: 'VIGENTE' | 'POR_VENCER' | 'VENCIDO';
 }
 
+const ensureTableExists = async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS hosting_dominio (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        tipo ENUM('HOSTING', 'DOMINIO') NOT NULL,
+        nombre VARCHAR(255) NOT NULL,
+        detalle TEXT NULL,
+        pagado_hasta DATE NOT NULL,
+        empresa_id INT NULL,
+        proveedor_id INT NULL,
+        creador_id INT NULL,
+        precio_renovacion DECIMAL(10,2) NULL,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        ultima_notificacion DATE NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        CONSTRAINT fk_hd_empresa FOREIGN KEY (empresa_id) REFERENCES empresa(id) ON DELETE SET NULL,
+        CONSTRAINT fk_hd_proveedor FOREIGN KEY (proveedor_id) REFERENCES proveedor(id) ON DELETE SET NULL,
+        CONSTRAINT fk_hd_creador FOREIGN KEY (creador_id) REFERENCES usuario(id) ON DELETE SET NULL
+      ) ENGINE=InnoDB;
+    `);
+  } catch (e) {
+    console.error('Error auto-creating hosting_dominio table:', e);
+  }
+};
+
 export const getHostingDominios = async (
   currentUser: any,
   tipo?: 'HOSTING' | 'DOMINIO',
   empresaId?: number,
   search?: string
 ) => {
+  await ensureTableExists();
   const whereClauses: string[] = ['hd.is_active = 1'];
   const params: any[] = [];
 

@@ -651,14 +651,12 @@ export const getIngresosBodega = async (
   const selectQuery = `
     SELECT ib.*, e.nombre as empresa_nombre, prov.nombre as proveedor_nombre,
            u.nombre_completo as realizado_por_nombre,
-           COUNT(a.id) as cantidad_activos
+           (SELECT COUNT(*) FROM activo a WHERE a.ingreso_bodega_id = ib.id) as cantidad_activos
     FROM ingreso_bodega ib
     LEFT JOIN empresa e ON ib.empresa_id = e.id
     LEFT JOIN proveedor prov ON ib.proveedor_id = prov.id
     LEFT JOIN usuario u ON ib.realizado_por_id = u.id
-    LEFT JOIN activo a ON a.ingreso_bodega_id = ib.id
     ${whereStr}
-    GROUP BY ib.id
     ORDER BY ib.created_at DESC
     LIMIT ? OFFSET ?
   `;
@@ -884,14 +882,12 @@ export const getEgresosBodega = async (
   const selectQuery = `
     SELECT eb.*, e.nombre as empresa_nombre, p.nombre as custodio_nombre,
            u.nombre_completo as realizado_por_nombre,
-           COUNT(a.id) as cantidad_activos
+           (SELECT COUNT(*) FROM activo a WHERE a.egreso_bodega_id = eb.id) as cantidad_activos
     FROM egreso_bodega eb
     LEFT JOIN empresa e ON eb.empresa_id = e.id
     LEFT JOIN persona p ON eb.custodio_id = p.id
     LEFT JOIN usuario u ON eb.realizado_por_id = u.id
-    LEFT JOIN activo a ON a.egreso_bodega_id = eb.id
     ${whereStr}
-    GROUP BY eb.id
     ORDER BY eb.created_at DESC
     LIMIT ? OFFSET ?
   `;
@@ -1146,14 +1142,12 @@ export const getRecepcionesBodega = async (
   const selectQuery = `
     SELECT rb.*, e.nombre as empresa_nombre, p.nombre as persona_entrega_nombre,
            u.nombre_completo as recibido_por_nombre,
-           COUNT(a.id) as cantidad_activos
+           (SELECT COUNT(*) FROM activo a WHERE a.recepcion_bodega_id = rb.id) as cantidad_activos
     FROM recepcion_bodega rb
     LEFT JOIN empresa e ON rb.empresa_id = e.id
     LEFT JOIN persona p ON rb.persona_entrega_id = p.id
     LEFT JOIN usuario u ON rb.recibido_por_id = u.id
-    LEFT JOIN activo a ON a.recepcion_bodega_id = rb.id
     ${whereStr}
-    GROUP BY rb.id
     ORDER BY rb.created_at DESC
     LIMIT ? OFFSET ?
   `;
