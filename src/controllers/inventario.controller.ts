@@ -6,6 +6,7 @@ import { pool } from '../db/connection';
 import { generarActaMovimiento, generarActaIngreso, generarActaEgreso, generarActaEntregaEgreso, generarActaRecepcion } from '../utils/pdf.generator';
 import { getEmpresaAbbr } from '../services/credencial.service';
 import fs from 'fs';
+import { RowDataPacket } from 'mysql2';
 
 const getAssignedEmpresas = async (usuarioId: number): Promise<number[]> => {
   const [rows] = await pool.query<any[]>(
@@ -98,17 +99,68 @@ export const getHistorialCambios = async (req: AuthRequest, res: Response): Prom
 };
 
 export const descargarActa = async (req: AuthRequest, res: Response): Promise<void> => {
-  const movimientoId = parseInt(req.params.movimiento_id);
-  const movimiento = await inventarioService.getMovimiento(movimientoId);
-  if (!movimiento) {
-    res.status(404).json({ detail: 'Movimiento no encontrado' });
-    return;
+  try {
+    const movimientoId = parseInt(req.params.movimiento_id);
+    const movimiento = await inventarioService.getMovimiento(movimientoId);
+    if (!movimiento) {
+      res.status(404).json({ detail: 'Movimiento no encontrado' });
+      return;
+    }
+
+    const obs = movimiento.observaciones || '';
+
+    // 1. Try to find matching Egreso de Bodega by code in observations
+    const egresoMatch = obs.match(/TI-[A-Z0-9]+-AE-\d+/i) || obs.match(/AE-\d+/i);
+    if (egresoMatch) {
+      const codeToSearch = egresoMatch[0].toUpperCase();
+      const [egresoRows] = await pool.query<RowDataPacket[]>(
+        `SELECT id FROM egreso_bodega WHERE codigo_egreso = ? OR codigo_egreso LIKE ? LIMIT 1`,
+        [codeToSearch, `%${codeToSearch}%`]
+      );
+      if (egresoRows.length > 0) {
+        const egreso = await inventarioService.getEgresoBodegaById(egresoRows[0].id);
+        if (egreso) {
+          const formattedCode = await inventarioService.getEgresoCodigoFormatted(egreso);
+          egreso.codigo_egreso = formattedCode;
+          const pdfBuffer = await generarActaEntregaEgreso(egreso);
+          res.setHeader('Content-Type', 'application/pdf');
+          res.setHeader('Content-Disposition', `inline; filename="${formattedCode}.pdf"`);
+          res.send(pdfBuffer);
+          return;
+        }
+      }
+    }
+
+    // 2. Try to find matching Recepción de Bodega by code in observations
+    const recepcionMatch = obs.match(/TI-[A-Z0-9]+-AR-\d+/i) || obs.match(/AR-\d+/i);
+    if (recepcionMatch) {
+      const codeToSearch = recepcionMatch[0].toUpperCase();
+      const [recepcionRows] = await pool.query<RowDataPacket[]>(
+        `SELECT id FROM recepcion_bodega WHERE codigo_recepcion = ? OR codigo_recepcion LIKE ? LIMIT 1`,
+        [codeToSearch, `%${codeToSearch}%`]
+      );
+      if (recepcionRows.length > 0) {
+        const recepcion = await inventarioService.getRecepcionBodegaById(recepcionRows[0].id);
+        if (recepcion) {
+          const pdfBuffer = await generarActaRecepcion(recepcion);
+          res.setHeader('Content-Type', 'application/pdf');
+          res.setHeader('Content-Disposition', `inline; filename="${recepcion.codigo_recepcion}.pdf"`);
+          res.send(pdfBuffer);
+          return;
+        }
+      }
+    }
+
+    // Fallback to legacy single movement PDF
+    const pdfBuffer = await generarActaMovimiento(movimiento);
+    const nombreArchivo = `Acta_${movimiento.activo_codigo}_${movimiento.persona_recibe_cedula || 'mov'}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${nombreArchivo}"`);
+    res.send(pdfBuffer);
+  } catch (error: any) {
+    console.error('Error in descargarActa:', error);
+    res.status(500).json({ detail: 'Error al generar el acta PDF', error: error.message });
   }
-  const pdfBuffer = await generarActaMovimiento(movimiento);
-  const nombreArchivo = `Acta_${movimiento.activo_codigo}_${movimiento.persona_recibe_cedula}.pdf`;
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${nombreArchivo}"`);
-  res.send(pdfBuffer);
 };
 
 export const devolverActivo = async (req: AuthRequest, res: Response): Promise<void> => {
