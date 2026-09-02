@@ -126,7 +126,7 @@ export const generarActaMovimiento = (movimiento: any): Promise<Buffer> => {
        .text(receptorCedula, 325, firmaY + 75, { width: 220, align: 'center' });
 
     doc.fillColor('#9ca3af').fontSize(8).font('Helvetica')
-       .text('Documento generado automáticamente por Soporte TI SMO', 50, 750, { align: 'center' });
+       .text('Documento generado automáticamente por TISMO', 50, 750, { align: 'center' });
 
     doc.end();
   });
