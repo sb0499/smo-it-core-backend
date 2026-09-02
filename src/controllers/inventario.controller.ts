@@ -3,7 +3,7 @@ import { AuthRequest } from '../middlewares/auth.middleware';
 import * as inventarioService from '../services/inventario.service';
 import { excelService } from '../services/excel.service';
 import { pool } from '../db/connection';
-import { generarActaMovimiento } from '../utils/pdf.generator';
+import { generarActaMovimiento, generarActaIngreso, generarActaEgreso, generarActaEntregaEgreso } from '../utils/pdf.generator';
 import fs from 'fs';
 
 const getAssignedEmpresas = async (usuarioId: number): Promise<number[]> => {
@@ -268,3 +268,193 @@ export const updateActivo = async (req: AuthRequest, res: Response): Promise<voi
     res.status(500).json({ detail: 'Error al editar activo', error: error.message });
   }
 };
+
+export const createIngresoBodega = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.currentUser) {
+      res.status(401).json({ detail: 'Usuario no autenticado' });
+      return;
+    }
+
+    if (req.currentUser.rol_nombre === 'TECNICO') {
+      const assigned = await getAssignedEmpresas(req.currentUser.id);
+      if (!assigned.includes(Number(req.body.empresa_id))) {
+        res.status(403).json({ detail: 'No tienes autorización para registrar ingresos en esta sede.' });
+        return;
+      }
+    }
+
+    const ingreso = await inventarioService.createIngresoBodega(req.body, req.currentUser.id);
+    res.status(201).json(ingreso);
+  } catch (error: any) {
+    res.status(500).json({ detail: 'Error al registrar ingreso de bodega', error: error.message });
+  }
+};
+
+export const getIngresosBodega = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const search = (req.query.search as string) || '';
+
+    let empresaIds: number[] | undefined = undefined;
+    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
+      empresaIds = await getAssignedEmpresas(req.currentUser.id);
+    }
+
+    const result = await inventarioService.getIngresosBodega(page, limit, search, empresaIds);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ detail: 'Error al consultar ingresos de bodega', error: error.message });
+  }
+};
+
+export const getIngresoBodegaById = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      res.status(400).json({ detail: 'ID de ingreso inválido' });
+      return;
+    }
+
+    const ingreso = await inventarioService.getIngresoBodegaById(id);
+    if (!ingreso) {
+      res.status(404).json({ detail: 'Ingreso de bodega no encontrado' });
+      return;
+    }
+
+    res.json(ingreso);
+  } catch (error: any) {
+    res.status(500).json({ detail: 'Error al obtener ingreso de bodega', error: error.message });
+  }
+};
+
+export const descargarActaIngreso = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      res.status(400).json({ detail: 'ID de ingreso inválido' });
+      return;
+    }
+
+    const ingreso = await inventarioService.getIngresoBodegaById(id);
+    if (!ingreso) {
+      res.status(404).json({ detail: 'Ingreso de bodega no encontrado' });
+      return;
+    }
+
+    const pdfBuffer = await generarActaIngreso(ingreso);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="Acta_Ingreso_${ingreso.codigo_ingreso}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (error: any) {
+    res.status(500).json({ detail: 'Error al generar acta PDF de ingreso', error: error.message });
+  }
+};
+
+export const createEgresoBodega = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.currentUser) {
+      res.status(401).json({ detail: 'Usuario no autenticado' });
+      return;
+    }
+
+    if (req.currentUser.rol_nombre === 'TECNICO') {
+      const assigned = await getAssignedEmpresas(req.currentUser.id);
+      if (!assigned.includes(Number(req.body.empresa_id))) {
+        res.status(403).json({ detail: 'No tienes autorización para registrar egresos en esta sede.' });
+        return;
+      }
+    }
+
+    const egreso = await inventarioService.createEgresoBodega(req.body, req.currentUser.id);
+    res.status(201).json(egreso);
+  } catch (error: any) {
+    res.status(500).json({ detail: 'Error al registrar egreso de bodega', error: error.message });
+  }
+};
+
+export const getEgresosBodega = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const search = (req.query.search as string) || '';
+
+    let empresaIds: number[] | undefined = undefined;
+    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
+      empresaIds = await getAssignedEmpresas(req.currentUser.id);
+    }
+
+    const result = await inventarioService.getEgresosBodega(page, limit, search, empresaIds);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ detail: 'Error al consultar egresos de bodega', error: error.message });
+  }
+};
+
+export const getEgresoBodegaById = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      res.status(400).json({ detail: 'ID de egreso inválido' });
+      return;
+    }
+
+    const egreso = await inventarioService.getEgresoBodegaById(id);
+    if (!egreso) {
+      res.status(404).json({ detail: 'Egreso de bodega no encontrado' });
+      return;
+    }
+
+    res.json(egreso);
+  } catch (error: any) {
+    res.status(500).json({ detail: 'Error al obtener egreso de bodega', error: error.message });
+  }
+};
+
+export const descargarActaEgreso = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      res.status(400).json({ detail: 'ID de egreso inválido' });
+      return;
+    }
+
+    const egreso = await inventarioService.getEgresoBodegaById(id);
+    if (!egreso) {
+      res.status(404).json({ detail: 'Egreso de bodega no encontrado' });
+      return;
+    }
+
+    const pdfBuffer = await generarActaEgreso(egreso);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="Acta_Egreso_${egreso.codigo_egreso}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (error: any) {
+    res.status(500).json({ detail: 'Error al generar acta PDF de egreso', error: error.message });
+  }
+};
+
+export const descargarActaEntregaEgreso = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      res.status(400).json({ detail: 'ID de egreso inválido' });
+      return;
+    }
+
+    const egreso = await inventarioService.getEgresoBodegaById(id);
+    if (!egreso) {
+      res.status(404).json({ detail: 'Egreso de bodega no encontrado' });
+      return;
+    }
+
+    const pdfBuffer = await generarActaEntregaEgreso(egreso);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="Acta_Entrega_${egreso.codigo_egreso}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (error: any) {
+    res.status(500).json({ detail: 'Error al generar acta PDF de entrega', error: error.message });
+  }
+};
+

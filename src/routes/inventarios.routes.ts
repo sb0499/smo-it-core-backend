@@ -49,6 +49,19 @@ export const inventariosRouter = Router();
 inventariosRouter.get('/', requireAuth, requireAdminOrTecnico, ctrl.getActivos);
 inventariosRouter.get('/autogenerar-codigo', requireAuth, requireAdminOrTecnico, ctrl.autogenerarCodigo);
 
+// Ingresos de Bodega (Actas de Ingreso)
+inventariosRouter.post('/ingresos', requireAuth, requireAdminOrTecnico, ctrl.createIngresoBodega);
+inventariosRouter.get('/ingresos', requireAuth, requireAdminOrTecnico, ctrl.getIngresosBodega);
+inventariosRouter.get('/ingresos/:id', requireAuth, requireAdminOrTecnico, ctrl.getIngresoBodegaById);
+inventariosRouter.get('/ingresos/:id/acta', requireAuth, requireAdminOrTecnico, ctrl.descargarActaIngreso);
+
+// Egresos de Bodega (Actas de Egreso / Asignación Multi-Activo)
+inventariosRouter.post('/egresos', requireAuth, requireAdminOrTecnico, ctrl.createEgresoBodega);
+inventariosRouter.get('/egresos', requireAuth, requireAdminOrTecnico, ctrl.getEgresosBodega);
+inventariosRouter.get('/egresos/:id', requireAuth, requireAdminOrTecnico, ctrl.getEgresoBodegaById);
+inventariosRouter.get('/egresos/:id/acta', requireAuth, requireAdminOrTecnico, ctrl.descargarActaEgreso);
+inventariosRouter.get('/egresos/:id/acta-entrega', requireAuth, requireAdminOrTecnico, ctrl.descargarActaEntregaEgreso);
+
 /**
  * @openapi
  * /api/v1/inventarios/movimientos/global:

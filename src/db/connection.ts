@@ -302,6 +302,63 @@ async function initDbSchema() {
       await pool.query(`ALTER TABLE entrega_credencial ADD COLUMN correo_receptor VARCHAR(150) NULL`);
     }
 
+    // 7. Create ingreso_bodega table
+    console.log('Checking/creating ingreso_bodega table...');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ingreso_bodega (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        codigo_ingreso VARCHAR(50) NOT NULL UNIQUE,
+        empresa_id INT NOT NULL,
+        proveedor_id INT NULL,
+        nro_orden_compra VARCHAR(100) NOT NULL,
+        nro_factura VARCHAR(100) NULL,
+        nro_solicitud_pago VARCHAR(100) NULL,
+        fecha_compra DATE NOT NULL,
+        fecha_ingreso DATE NOT NULL,
+        descripcion TEXT NOT NULL,
+        realizado_por_id INT NULL,
+        revisado_por VARCHAR(150) NOT NULL DEFAULT 'Paulina Porras',
+        revisado_por_cargo VARCHAR(150) NOT NULL DEFAULT 'GERENTE DE TI',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT fk_ingreso_empresa FOREIGN KEY (empresa_id) REFERENCES empresa(id) ON DELETE CASCADE,
+        CONSTRAINT fk_ingreso_proveedor FOREIGN KEY (proveedor_id) REFERENCES proveedor(id) ON DELETE SET NULL,
+        CONSTRAINT fk_ingreso_realizado_por FOREIGN KEY (realizado_por_id) REFERENCES usuario(id) ON DELETE SET NULL
+      ) ENGINE=InnoDB;
+    `);
+
+    if (!colNames.includes('ingreso_bodega_id')) {
+      console.log('Adding ingreso_bodega_id column to activo table...');
+      await pool.query(`ALTER TABLE activo ADD COLUMN ingreso_bodega_id INT NULL`);
+      await pool.query(`ALTER TABLE activo ADD CONSTRAINT fk_activo_ingreso_bodega FOREIGN KEY (ingreso_bodega_id) REFERENCES ingreso_bodega(id) ON DELETE SET NULL`);
+    }
+
+    // 8. Create egreso_bodega table
+    console.log('Checking/creating egreso_bodega table...');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS egreso_bodega (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        codigo_egreso VARCHAR(50) NOT NULL UNIQUE,
+        empresa_id INT NOT NULL,
+        custodio_id INT NOT NULL,
+        area VARCHAR(100) NULL,
+        observaciones TEXT NULL,
+        fecha_egreso DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        realizado_por_id INT NULL,
+        revisado_por VARCHAR(150) NOT NULL DEFAULT 'Paulina Porras',
+        revisado_por_cargo VARCHAR(150) NOT NULL DEFAULT 'JEFE DE SISTEMAS',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT fk_egreso_empresa FOREIGN KEY (empresa_id) REFERENCES empresa(id) ON DELETE CASCADE,
+        CONSTRAINT fk_egreso_custodio FOREIGN KEY (custodio_id) REFERENCES persona(id) ON DELETE CASCADE,
+        CONSTRAINT fk_egreso_realizado_por FOREIGN KEY (realizado_por_id) REFERENCES usuario(id) ON DELETE SET NULL
+      ) ENGINE=InnoDB;
+    `);
+
+    if (!colNames.includes('egreso_bodega_id')) {
+      console.log('Adding egreso_bodega_id column to activo table...');
+      await pool.query(`ALTER TABLE activo ADD COLUMN egreso_bodega_id INT NULL`);
+      await pool.query(`ALTER TABLE activo ADD CONSTRAINT fk_activo_egreso_bodega FOREIGN KEY (egreso_bodega_id) REFERENCES egreso_bodega(id) ON DELETE SET NULL`);
+    }
+
     // Purge old chat messages for E2EE
     console.log('Purging old plaintext chat messages for E2EE...');
     await pool.query(`DELETE FROM chat_mensaje`);

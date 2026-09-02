@@ -429,3 +429,420 @@ export const getHistorialCambiosActivo = async (activoId: number) => {
   );
   return rows;
 };
+
+export const generateCodigoIngreso = async (empresaId: number): Promise<string> => {
+  const [empresaRows] = await pool.query<RowDataPacket[]>('SELECT nombre FROM empresa WHERE id = ?', [empresaId]);
+  if (empresaRows.length === 0) throw new Error('Sede no encontrada.');
+  const sedeName = empresaRows[0].nombre;
+
+  const words = sedeName.trim().split(/\s+/).filter((w: string) => w.length > 0);
+  let initials = 'XX';
+  if (words.length >= 2) {
+    initials = (words[0][0] + words[1][0]).toUpperCase();
+  } else if (words.length === 1) {
+    initials = words[0].substring(0, 2).toUpperCase();
+  }
+
+  const prefix = `IB-${initials}`;
+
+  const [ingresoRows] = await pool.query<RowDataPacket[]>(
+    'SELECT codigo_ingreso FROM ingreso_bodega WHERE codigo_ingreso LIKE ?',
+    [`${prefix}-%`]
+  );
+
+  let maxSeq = 0;
+  for (const row of ingresoRows) {
+    const parts = row.codigo_ingreso.split('-');
+    const seqStr = parts[parts.length - 1];
+    const seq = parseInt(seqStr, 10);
+    if (!isNaN(seq) && seq > maxSeq) {
+      maxSeq = seq;
+    }
+  }
+
+  const nextSeq = String(maxSeq + 1).padStart(4, '0');
+  return `${prefix}-${nextSeq}`;
+};
+
+export const createIngresoBodega = async (
+  data: {
+    empresa_id: number;
+    proveedor_id?: number;
+    nro_orden_compra: string;
+    nro_factura?: string;
+    nro_solicitud_pago?: string;
+    fecha_compra: string;
+    fecha_ingreso: string;
+    descripcion: string;
+    revisado_por?: string;
+    revisado_por_cargo?: string;
+    activos: Array<{
+      tipo_equipo_id: number;
+      marca: string;
+      modelo: string;
+      serial?: string;
+      especificaciones?: string;
+      bodega_id?: number;
+    }>;
+  },
+  usuarioId?: number
+) => {
+  if (!data.activos || data.activos.length === 0) {
+    throw new Error('Debe incluir al menos un activo para registrar el ingreso de bodega.');
+  }
+
+  const codigoIngreso = await generateCodigoIngreso(data.empresa_id);
+
+  // Default bodega for company if not provided per asset
+  const [bodegaRows] = await pool.query<RowDataPacket[]>(
+    'SELECT id FROM bodega WHERE empresa_id = ? ORDER BY id ASC LIMIT 1',
+    [data.empresa_id]
+  );
+  const defaultBodegaId = bodegaRows[0]?.id || null;
+
+  const revisadoPor = data.revisado_por || 'Paulina Porras';
+  const revisadoPorCargo = data.revisado_por_cargo || 'GERENTE DE TI';
+
+  const [result] = await pool.query<ResultSetHeader>(
+    `INSERT INTO ingreso_bodega (codigo_ingreso, empresa_id, proveedor_id, nro_orden_compra, nro_factura, nro_solicitud_pago, fecha_compra, fecha_ingreso, descripcion, realizado_por_id, revisado_por, revisado_por_cargo)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      codigoIngreso,
+      data.empresa_id,
+      data.proveedor_id || null,
+      data.nro_orden_compra,
+      data.nro_factura || null,
+      data.nro_solicitud_pago || null,
+      data.fecha_compra,
+      data.fecha_ingreso,
+      data.descripcion,
+      usuarioId || null,
+      revisadoPor,
+      revisadoPorCargo
+    ]
+  );
+
+  const ingresoId = result.insertId;
+  const createdActivos = [];
+
+  for (const item of data.activos) {
+    const finalCodigo = await generateUniqueCode(data.empresa_id, item.tipo_equipo_id);
+    const bodegaId = item.bodega_id || defaultBodegaId;
+
+    const [activoResult] = await pool.query<ResultSetHeader>(
+      `INSERT INTO activo (codigo, serial, marca, modelo, especificaciones, estado, proveedor_id, fecha_compra, tipo_equipo_id, empresa_id, bodega_id, ingreso_bodega_id)
+       VALUES (?, ?, ?, ?, ?, 'Stock', ?, ?, ?, ?, ?, ?)`,
+      [
+        finalCodigo,
+        item.serial || null,
+        item.marca,
+        item.modelo,
+        item.especificaciones || null,
+        data.proveedor_id || null,
+        data.fecha_compra,
+        item.tipo_equipo_id,
+        data.empresa_id,
+        bodegaId,
+        ingresoId
+      ]
+    );
+
+    if (usuarioId) {
+      await pool.query(
+        `INSERT INTO historial_cambios_activo (activo_id, usuario_id, cambios) VALUES (?, ?, ?)`,
+        [activoResult.insertId, usuarioId, `Activo registrado en Ingreso de Bodega ${codigoIngreso}`]
+      );
+    }
+
+    createdActivos.push(activoResult.insertId);
+  }
+
+  return getIngresoBodegaById(ingresoId);
+};
+
+export const getIngresosBodega = async (
+  page = 1,
+  limit = 10,
+  search = '',
+  empresaIds?: number[]
+) => {
+  const skip = (page - 1) * limit;
+  let whereClauses: string[] = [];
+  const params: any[] = [];
+
+  if (empresaIds && empresaIds.length > 0) {
+    whereClauses.push(`ib.empresa_id IN (${empresaIds.map(() => '?').join(',')})`);
+    params.push(...empresaIds);
+  } else if (empresaIds) {
+    whereClauses.push('1=0');
+  }
+
+  if (search) {
+    const searchWildcard = `%${search}%`;
+    whereClauses.push(
+      `(ib.codigo_ingreso LIKE ? OR ib.nro_orden_compra LIKE ? OR ib.nro_factura LIKE ? OR e.nombre LIKE ? OR prov.nombre LIKE ?)`
+    );
+    params.push(searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard);
+  }
+
+  const whereStr = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
+
+  const countQuery = `
+    SELECT COUNT(*) as count
+    FROM ingreso_bodega ib
+    LEFT JOIN empresa e ON ib.empresa_id = e.id
+    LEFT JOIN proveedor prov ON ib.proveedor_id = prov.id
+    ${whereStr}
+  `;
+  const [countRows] = await pool.query<RowDataPacket[]>(countQuery, params);
+  const total = countRows[0]?.count || 0;
+
+  const selectQuery = `
+    SELECT ib.*, e.nombre as empresa_nombre, prov.nombre as proveedor_nombre,
+           u.nombre_completo as realizado_por_nombre,
+           COUNT(a.id) as cantidad_activos
+    FROM ingreso_bodega ib
+    LEFT JOIN empresa e ON ib.empresa_id = e.id
+    LEFT JOIN proveedor prov ON ib.proveedor_id = prov.id
+    LEFT JOIN usuario u ON ib.realizado_por_id = u.id
+    LEFT JOIN activo a ON a.ingreso_bodega_id = ib.id
+    ${whereStr}
+    GROUP BY ib.id
+    ORDER BY ib.created_at DESC
+    LIMIT ? OFFSET ?
+  `;
+
+  const selectParams = [...params, limit, skip];
+  const [dataRows] = await pool.query<RowDataPacket[]>(selectQuery, selectParams);
+
+  return {
+    total,
+    page,
+    limit,
+    data: dataRows
+  };
+};
+
+export const getIngresoBodegaById = async (ingresoId: number) => {
+  const [ingresoRows] = await pool.query<RowDataPacket[]>(
+    `SELECT ib.*, e.nombre as empresa_nombre, prov.nombre as proveedor_nombre,
+            u.nombre_completo as realizado_por_nombre,
+            r.nombre as realizado_por_rol
+     FROM ingreso_bodega ib
+     LEFT JOIN empresa e ON ib.empresa_id = e.id
+     LEFT JOIN proveedor prov ON ib.proveedor_id = prov.id
+     LEFT JOIN usuario u ON ib.realizado_por_id = u.id
+     LEFT JOIN rol r ON u.rol_id = r.id
+     WHERE ib.id = ?`,
+    [ingresoId]
+  );
+
+  if (ingresoRows.length === 0) return null;
+  const ingreso = ingresoRows[0];
+
+  const [activosRows] = await pool.query<RowDataPacket[]>(
+    `SELECT a.*, te.nombre as tipo_equipo_nombre
+     FROM activo a
+     LEFT JOIN tipo_equipo te ON a.tipo_equipo_id = te.id
+     WHERE a.ingreso_bodega_id = ?
+     ORDER BY a.id ASC`,
+    [ingresoId]
+  );
+
+  ingreso.activos = activosRows;
+  return ingreso;
+};
+
+export const generateCodigoEgreso = async (empresaId: number): Promise<string> => {
+  const [empresaRows] = await pool.query<RowDataPacket[]>('SELECT nombre FROM empresa WHERE id = ?', [empresaId]);
+  if (empresaRows.length === 0) throw new Error('Sede no encontrada.');
+  const sedeName = empresaRows[0].nombre;
+
+  const words = sedeName.trim().split(/\s+/).filter((w: string) => w.length > 0);
+  let initials = 'XX';
+  if (words.length >= 2) {
+    initials = (words[0][0] + words[1][0]).toUpperCase();
+  } else if (words.length === 1) {
+    initials = words[0].substring(0, 2).toUpperCase();
+  }
+
+  const prefix = `EB-${initials}`;
+
+  const [egresoRows] = await pool.query<RowDataPacket[]>(
+    'SELECT codigo_egreso FROM egreso_bodega WHERE codigo_egreso LIKE ?',
+    [`${prefix}-%`]
+  );
+
+  let maxSeq = 0;
+  for (const row of egresoRows) {
+    const parts = row.codigo_egreso.split('-');
+    const seqStr = parts[parts.length - 1];
+    const seq = parseInt(seqStr, 10);
+    if (!isNaN(seq) && seq > maxSeq) {
+      maxSeq = seq;
+    }
+  }
+
+  const nextSeq = String(maxSeq + 1).padStart(4, '0');
+  return `${prefix}-${nextSeq}`;
+};
+
+export const createEgresoBodega = async (
+  data: {
+    empresa_id: number;
+    custodio_id: number;
+    area?: string;
+    observaciones?: string;
+    revisado_por?: string;
+    revisado_por_cargo?: string;
+    activo_ids: number[];
+  },
+  usuarioId?: number
+) => {
+  if (!data.activo_ids || data.activo_ids.length === 0) {
+    throw new Error('Debe seleccionar al menos un activo para registrar el egreso de bodega.');
+  }
+
+  const codigoEgreso = await generateCodigoEgreso(data.empresa_id);
+  const revisadoPor = data.revisado_por || 'Paulina Porras';
+  const revisadoPorCargo = data.revisado_por_cargo || 'JEFE DE SISTEMAS';
+
+  const [result] = await pool.query<ResultSetHeader>(
+    `INSERT INTO egreso_bodega (codigo_egreso, empresa_id, custodio_id, area, observaciones, realizado_por_id, revisado_por, revisado_por_cargo)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      codigoEgreso,
+      data.empresa_id,
+      data.custodio_id,
+      data.area || null,
+      data.observaciones || null,
+      usuarioId || null,
+      revisadoPor,
+      revisadoPorCargo
+    ]
+  );
+
+  const egresoId = result.insertId;
+
+  // Get custodio name & persona info for movement log
+  const [custodioRows] = await pool.query<RowDataPacket[]>('SELECT nombre FROM persona WHERE id = ?', [data.custodio_id]);
+  const custodioNombre = custodioRows[0]?.nombre || 'Custodio';
+
+  for (const activoId of data.activo_ids) {
+    // Update asset to Asignado
+    await pool.query(
+      `UPDATE activo SET estado = 'Asignado', persona_id = ?, egreso_bodega_id = ? WHERE id = ?`,
+      [data.custodio_id, egresoId, activoId]
+    );
+
+    // Log movement
+    await pool.query(
+      `INSERT INTO movimiento_inventario (activo_id, hacia_persona_id, usuario_id, tipo, observaciones)
+       VALUES (?, ?, ?, 'Asignación', ?)`,
+      [activoId, data.custodio_id, usuarioId || null, `Egreso de Bodega ${codigoEgreso}: ${data.observaciones || ''}`]
+    );
+
+    if (usuarioId) {
+      await pool.query(
+        `INSERT INTO historial_cambios_activo (activo_id, usuario_id, cambios) VALUES (?, ?, ?)`,
+        [activoId, usuarioId, `Asignado a ${custodioNombre} mediante Egreso de Bodega ${codigoEgreso}`]
+      );
+    }
+  }
+
+  return getEgresoBodegaById(egresoId);
+};
+
+export const getEgresosBodega = async (
+  page = 1,
+  limit = 10,
+  search = '',
+  empresaIds?: number[]
+) => {
+  const skip = (page - 1) * limit;
+  let whereClauses: string[] = [];
+  const params: any[] = [];
+
+  if (empresaIds && empresaIds.length > 0) {
+    whereClauses.push(`eb.empresa_id IN (${empresaIds.map(() => '?').join(',')})`);
+    params.push(...empresaIds);
+  } else if (empresaIds) {
+    whereClauses.push('1=0');
+  }
+
+  if (search) {
+    const searchWildcard = `%${search}%`;
+    whereClauses.push(
+      `(eb.codigo_egreso LIKE ? OR p.nombre LIKE ? OR eb.area LIKE ? OR e.nombre LIKE ?)`
+    );
+    params.push(searchWildcard, searchWildcard, searchWildcard, searchWildcard);
+  }
+
+  const whereStr = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
+
+  const countQuery = `
+    SELECT COUNT(*) as count
+    FROM egreso_bodega eb
+    LEFT JOIN empresa e ON eb.empresa_id = e.id
+    LEFT JOIN persona p ON eb.custodio_id = p.id
+    ${whereStr}
+  `;
+  const [countRows] = await pool.query<RowDataPacket[]>(countQuery, params);
+  const total = countRows[0]?.count || 0;
+
+  const selectQuery = `
+    SELECT eb.*, e.nombre as empresa_nombre, p.nombre as custodio_nombre,
+           u.nombre_completo as realizado_por_nombre,
+           COUNT(a.id) as cantidad_activos
+    FROM egreso_bodega eb
+    LEFT JOIN empresa e ON eb.empresa_id = e.id
+    LEFT JOIN persona p ON eb.custodio_id = p.id
+    LEFT JOIN usuario u ON eb.realizado_por_id = u.id
+    LEFT JOIN activo a ON a.egreso_bodega_id = eb.id
+    ${whereStr}
+    GROUP BY eb.id
+    ORDER BY eb.created_at DESC
+    LIMIT ? OFFSET ?
+  `;
+
+  const selectParams = [...params, limit, skip];
+  const [dataRows] = await pool.query<RowDataPacket[]>(selectQuery, selectParams);
+
+  return {
+    total,
+    page,
+    limit,
+    data: dataRows
+  };
+};
+
+export const getEgresoBodegaById = async (egresoId: number) => {
+  const [egresoRows] = await pool.query<RowDataPacket[]>(
+    `SELECT eb.*, e.nombre as empresa_nombre, p.nombre as custodio_nombre, p.cargo as custodio_cargo, p.departamento as custodio_departamento,
+            u.nombre_completo as realizado_por_nombre,
+            r.nombre as realizado_por_rol
+     FROM egreso_bodega eb
+     LEFT JOIN empresa e ON eb.empresa_id = e.id
+     LEFT JOIN persona p ON eb.custodio_id = p.id
+     LEFT JOIN usuario u ON eb.realizado_por_id = u.id
+     LEFT JOIN rol r ON u.rol_id = r.id
+     WHERE eb.id = ?`,
+    [egresoId]
+  );
+
+  if (egresoRows.length === 0) return null;
+  const egreso = egresoRows[0];
+
+  const [activosRows] = await pool.query<RowDataPacket[]>(
+    `SELECT a.*, te.nombre as tipo_equipo_nombre
+     FROM activo a
+     LEFT JOIN tipo_equipo te ON a.tipo_equipo_id = te.id
+     WHERE a.egreso_bodega_id = ?
+     ORDER BY a.id ASC`,
+    [egresoId]
+  );
+
+  egreso.activos = activosRows;
+  return egreso;
+};
+
