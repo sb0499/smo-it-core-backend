@@ -48,6 +48,7 @@ guardiasRouter.get('/', requireAuth, ctrl.getGuardias);
  *         description: Guardia creada o actualizada
  */
 guardiasRouter.post('/', requireAuth, requireAdminOrTecnico, ctrl.createGuardia);
+guardiasRouter.post('/programar-turno', requireAuth, requireAdminOrTecnico, ctrl.programarTurnoGuardia);
 
 /**
  * @openapi

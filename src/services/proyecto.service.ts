@@ -25,12 +25,35 @@ export const calcularSemaforo = (fechaFinStr: string | Date, estado: string) => 
   return { semaforo: 'Verde', tiempo_restante: `${dias} días` };
 };
 
-// --- LOGGING DE HISTORIAL ---
+// --- LOGGING DE HISTORIAL Y NOTIFICACIONES ---
 export const logProyectoHistorial = async (proyectoId: number, usuarioId: number, descripcion: string) => {
   await pool.query(
     `INSERT INTO proyecto_historial (proyecto_id, usuario_id, descripcion_cambio) VALUES (?, ?, ?)`,
     [proyectoId, usuarioId, descripcion]
   );
+};
+
+export const notificarUsuario = async (usuarioId: number, titulo: string, mensaje: string) => {
+  if (!usuarioId) return;
+  try {
+    const [uRows] = await pool.query<RowDataPacket[]>(
+      `SELECT email, nombre_completo FROM usuario WHERE id = ?`,
+      [usuarioId]
+    );
+    if (uRows.length > 0) {
+      const u = uRows[0];
+      await crearNotificacion(usuarioId, titulo, mensaje).catch(console.error);
+      if (u.email) {
+        await enviarCorreo(
+          u.email,
+          titulo,
+          `Hola ${u.nombre_completo},\n\n${mensaje}\n\nSaludos,\nSistema TISMO`
+        ).catch(console.error);
+      }
+    }
+  } catch (err) {
+    console.error(`Error enviando notificación a usuario ID ${usuarioId}:`, err);
+  }
 };
 
 // --- RECALCULO DE PORCENTAJES Y CASACADA ---
@@ -369,6 +392,26 @@ export const createProyecto = async (data: { nombre: string; descripcion?: strin
     `El usuario ${currentUser.nombre_completo} creó el proyecto "${data.nombre}" en estado "Sin Iniciar"`
   );
 
+  // Notificar a los miembros asignados
+  if (data.miembros) {
+    try {
+      const ids = typeof data.miembros === 'string' ? JSON.parse(data.miembros) : data.miembros;
+      if (Array.isArray(ids)) {
+        for (const mId of ids) {
+          if (mId !== currentUser.id) {
+            await notificarUsuario(
+              mId,
+              `Nuevo Proyecto Asignado: ${data.nombre}`,
+              `Has sido asignado como miembro en el proyecto "${data.nombre}". Creado por ${currentUser.nombre_completo}. Fecha fin estimada: ${data.fecha_fin_estimada}.`
+            );
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error procesando notificaciones a miembros:', e);
+    }
+  }
+
   return getProyectoById(proyectoId, currentUser);
 };
 
@@ -403,6 +446,26 @@ export const updateProyecto = async (id: number, data: { nombre?: string; descri
   
   await logProyectoHistorial(id, currentUser.id, msg);
   await recalcularAvanceYEstados(id, currentUser.id);
+
+  // Notificar nuevos miembros agregados
+  if (data.miembros && data.miembros !== proj.miembros) {
+    try {
+      const oldIds = proj.miembros ? JSON.parse(proj.miembros) : [];
+      const newIds = typeof data.miembros === 'string' ? JSON.parse(data.miembros) : data.miembros;
+      if (Array.isArray(newIds)) {
+        const agregados = newIds.filter((mId: number) => !oldIds.includes(mId) && mId !== currentUser.id);
+        for (const mId of agregados) {
+          await notificarUsuario(
+            mId,
+            `Nuevo Proyecto Asignado: ${nombre}`,
+            `Has sido agregado como miembro en el proyecto "${nombre}".`
+          );
+        }
+      }
+    } catch (e) {
+      console.error('Error notificando miembros actualizados:', e);
+    }
+  }
 
   return getProyectoById(id, currentUser);
 };
@@ -476,6 +539,23 @@ export const createTarea = async (data: { proyecto_id: number; titulo: string; d
   );
 
   await recalcularAvanceYEstados(data.proyecto_id, currentUser.id);
+
+  // Notificaciones automáticas de Tarea
+  if (data.responsable_id) {
+    await notificarUsuario(
+      data.responsable_id,
+      `Nueva Tarea Asignada: ${data.titulo}`,
+      `Te han asignado la tarea "${data.titulo}" en el proyecto "${proj.nombre}". Fecha límite: ${data.fecha_fin}.`
+    );
+  }
+  if (proj.creador_id !== currentUser.id) {
+    await notificarUsuario(
+      proj.creador_id,
+      `Nueva Tarea Creada: ${data.titulo}`,
+      `El usuario ${currentUser.nombre_completo} creó la tarea "${data.titulo}" asignada a ${respName} en tu proyecto "${proj.nombre}".`
+    );
+  }
+
   return getTareaById(result.insertId);
 };
 
@@ -535,6 +615,35 @@ export const updateTarea = async (id: number, data: { titulo?: string; descripci
   
   await logProyectoHistorial(tarea.proyecto_id, currentUser.id, msg);
   await recalcularAvanceYEstados(tarea.proyecto_id, currentUser.id);
+
+  // Notificar cambios de tarea
+  if (data.responsable_id !== undefined && data.responsable_id !== tarea.responsable_id) {
+    await notificarUsuario(
+      data.responsable_id,
+      `Tarea Asignada: ${titulo}`,
+      `Te han reasignado la tarea "${titulo}" en el proyecto "${proj.nombre}".`
+    );
+  }
+
+  if ((data.estado && data.estado !== tarea.estado) || (data.avance_porcentaje !== undefined && data.avance_porcentaje !== tarea.avance_porcentaje)) {
+    const estadoAct = data.estado || tarea.estado;
+    const avanceAct = data.avance_porcentaje !== undefined ? data.avance_porcentaje : tarea.avance_porcentaje;
+
+    if (tarea.responsable_id !== currentUser.id) {
+      await notificarUsuario(
+        tarea.responsable_id,
+        `Actualización de Tarea: ${titulo}`,
+        `La tarea "${titulo}" en el proyecto "${proj.nombre}" fue actualizada por ${currentUser.nombre_completo}. Estado: "${estadoAct}" (${avanceAct}%).`
+      );
+    }
+    if (proj.creador_id !== currentUser.id && proj.creador_id !== tarea.responsable_id) {
+      await notificarUsuario(
+        proj.creador_id,
+        `Actualización de Tarea: ${titulo}`,
+        `La tarea "${titulo}" en tu proyecto "${proj.nombre}" fue actualizada por ${currentUser.nombre_completo}. Estado: "${estadoAct}" (${avanceAct}%).`
+      );
+    }
+  }
 
   return getTareaById(id);
 };
@@ -615,6 +724,23 @@ export const createSubtarea = async (data: { tarea_id: number; titulo: string; d
   );
 
   await recalcularAvanceYEstados(tarea.proyecto_id, currentUser.id);
+
+  // Notificaciones automáticas de Subtarea
+  if (data.responsable_id) {
+    await notificarUsuario(
+      data.responsable_id,
+      `Nueva Subtarea Asignada: ${data.titulo}`,
+      `Te han asignado la subtarea "${data.titulo}" dentro de la tarea "${tarea.titulo}" en el proyecto "${proj.nombre}". Fecha límite: ${data.fecha_fin}.`
+    );
+  }
+  if (tarea.responsable_id !== currentUser.id && tarea.responsable_id !== data.responsable_id) {
+    await notificarUsuario(
+      tarea.responsable_id,
+      `Nueva Subtarea Creada: ${data.titulo}`,
+      `Se creó la subtarea "${data.titulo}" asignada a ${respName} en tu tarea "${tarea.titulo}" (Proyecto: "${proj.nombre}").`
+    );
+  }
+
   return getSubtareaById(result.insertId);
 };
 
@@ -671,6 +797,35 @@ export const updateSubtarea = async (id: number, data: { titulo?: string; descri
   
   await logProyectoHistorial(tarea.proyecto_id, currentUser.id, msg);
   await recalcularAvanceYEstados(tarea.proyecto_id, currentUser.id);
+
+  // Notificar cambios de subtarea
+  if (data.responsable_id !== undefined && data.responsable_id !== sub.responsable_id) {
+    await notificarUsuario(
+      data.responsable_id,
+      `Subtarea Asignada: ${titulo}`,
+      `Te han reasignado la subtarea "${titulo}" en la tarea "${tarea.titulo}" del proyecto "${proj.nombre}".`
+    );
+  }
+
+  if ((data.estado && data.estado !== sub.estado) || (data.avance_porcentaje !== undefined && data.avance_porcentaje !== sub.avance_porcentaje)) {
+    const estadoAct = data.estado || sub.estado;
+    const avanceAct = data.avance_porcentaje !== undefined ? data.avance_porcentaje : sub.avance_porcentaje;
+
+    if (sub.responsable_id !== currentUser.id) {
+      await notificarUsuario(
+        sub.responsable_id,
+        `Actualización de Subtarea: ${titulo}`,
+        `La subtarea "${titulo}" en el proyecto "${proj.nombre}" fue actualizada por ${currentUser.nombre_completo}. Estado: "${estadoAct}" (${avanceAct}%).`
+      );
+    }
+    if (tarea.responsable_id !== currentUser.id && tarea.responsable_id !== sub.responsable_id) {
+      await notificarUsuario(
+        tarea.responsable_id,
+        `Actualización de Subtarea: ${titulo}`,
+        `La subtarea "${titulo}" en tu tarea "${tarea.titulo}" fue actualizada por ${currentUser.nombre_completo}. Estado: "${estadoAct}" (${avanceAct}%).`
+      );
+    }
+  }
 
   return getSubtareaById(id);
 };

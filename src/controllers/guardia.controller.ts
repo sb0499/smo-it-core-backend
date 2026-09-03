@@ -23,6 +23,15 @@ export const createGuardia = async (req: AuthRequest, res: Response): Promise<vo
   res.status(201).json(guardia);
 };
 
+export const programarTurnoGuardia = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const result = await guardiaService.programarTurnoGuardia(req.body);
+    res.status(201).json(result);
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+};
+
 export const deleteGuardia = async (req: AuthRequest, res: Response): Promise<void> => {
   const guardiaId = parseInt(req.params.guardia_id);
   const guardia = await guardiaService.deleteGuardia(guardiaId);
