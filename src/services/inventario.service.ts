@@ -76,12 +76,13 @@ export const getActivos = async (
   // Get paginated data
   let selectQuery = `
     SELECT a.*, p.nombre as persona_nombre, p.cedula as persona_cedula,
+           p.departamento as persona_departamento, p.cargo as persona_cargo,
            prov.nombre as proveedor_nombre, prov.contacto as proveedor_contacto,
            te.nombre as tipo_equipo_nombre, e.nombre as empresa_nombre,
            b.nombre as bodega_nombre
     FROM activo a
     LEFT JOIN egreso_bodega eb ON a.egreso_bodega_id = eb.id
-    LEFT JOIN persona p ON eb.custodio_id = p.id
+    LEFT JOIN persona p ON p.id = COALESCE(a.persona_id, eb.custodio_id)
     LEFT JOIN proveedor prov ON a.proveedor_id = prov.id
     LEFT JOIN tipo_equipo te ON a.tipo_equipo_id = te.id
     LEFT JOIN empresa e ON a.empresa_id = e.id
@@ -171,6 +172,7 @@ export const createActivo = async (
   
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT a.*, p.nombre as persona_nombre, p.cedula as persona_cedula,
+            p.departamento as persona_departamento, p.cargo as persona_cargo,
             prov.nombre as proveedor_nombre, prov.contacto as proveedor_contacto,
             te.nombre as tipo_equipo_nombre, e.nombre as empresa_nombre,
             b.nombre as bodega_nombre
