@@ -54,9 +54,9 @@ export const getActivos = async (
   if (search) {
     const searchWildcard = `%${search}%`;
     whereClauses.push(
-      `(a.codigo LIKE ? OR a.serial LIKE ? OR a.marca LIKE ? OR a.modelo LIKE ? OR e.nombre LIKE ? OR te.nombre LIKE ?)`
+      `(a.codigo LIKE ? OR a.serial LIKE ? OR a.marca LIKE ? OR a.modelo LIKE ? OR e.nombre LIKE ? OR te.nombre LIKE ? OR p.nombre LIKE ? OR p.cedula LIKE ?)`
     );
-    params.push(searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard);
+    params.push(searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard);
   }
 
   const whereStr = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
@@ -66,6 +66,7 @@ export const getActivos = async (
     SELECT COUNT(*) as count 
     FROM activo a 
     LEFT JOIN egreso_bodega eb ON a.egreso_bodega_id = eb.id
+    LEFT JOIN persona p ON p.id = COALESCE(a.persona_id, eb.custodio_id)
     LEFT JOIN empresa e ON a.empresa_id = e.id 
     LEFT JOIN tipo_equipo te ON a.tipo_equipo_id = te.id
     ${whereStr}
