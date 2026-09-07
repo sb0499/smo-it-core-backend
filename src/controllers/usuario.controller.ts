@@ -20,13 +20,13 @@ export const getUsuarios = async (req: AuthRequest, res: Response): Promise<void
 };
 
 export const createUsuario = async (req: AuthRequest, res: Response): Promise<void> => {
-  const { email, password, nombre_completo, is_active, rol_id, empresa_ids, empresa_inventario_ids, nivel_soporte, grupo_n2 } = req.body;
+  const { email, password, nombre_completo, is_active, rol_id, empresa_ids, empresa_inventario_ids, nivel_soporte, grupo_n2, recibir_notificaciones_correo } = req.body;
   const existing = await usuarioService.getUsuarioByEmail(email);
   if (existing) {
     res.status(400).json({ detail: 'Este email ya está registrado.' });
     return;
   }
-  const usuario = await usuarioService.createUsuario({ email, password, nombre_completo, is_active: is_active ?? true, rol_id, empresa_ids, empresa_inventario_ids, nivel_soporte, grupo_n2 });
+  const usuario = await usuarioService.createUsuario({ email, password, nombre_completo, is_active: is_active ?? true, rol_id, empresa_ids, empresa_inventario_ids, nivel_soporte, grupo_n2, recibir_notificaciones_correo });
   res.status(201).json(usuario);
 };
 

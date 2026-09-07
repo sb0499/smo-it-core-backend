@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS usuario (
   must_change_password BOOLEAN DEFAULT FALSE,
   nivel_soporte ENUM('N1', 'N2') DEFAULT 'N1',
   grupo_n2 ENUM('Infraestructura', 'Desarrollo') DEFAULT NULL,
+  recibir_notificaciones_correo BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (rol_id) REFERENCES rol(id)

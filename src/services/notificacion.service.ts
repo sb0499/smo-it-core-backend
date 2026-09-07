@@ -150,6 +150,19 @@ export const generarPlantillaHTML = (subject: string, bodyText: string): string 
 };
 
 export const enviarCorreo = async (emailTo: string, subject: string, body: string, customHtml?: string): Promise<void> => {
+  try {
+    const [userRows] = await pool.query<RowDataPacket[]>(
+      `SELECT recibir_notificaciones_correo FROM usuario WHERE email = ?`,
+      [emailTo]
+    );
+    if (userRows.length > 0 && (userRows[0].recibir_notificaciones_correo === 0 || userRows[0].recibir_notificaciones_correo === false)) {
+      console.log(`Envío de correo cancelado a ${emailTo}: el usuario tiene desactivadas las notificaciones por correo.`);
+      return;
+    }
+  } catch (err) {
+    console.error(`Error al consultar preferencia de notificación por correo para ${emailTo}:`, err);
+  }
+
   const htmlToSend = customHtml || generarPlantillaHTML(subject, body);
 
   if (!config.MAIL_HOST || !config.MAIL_USER || !config.MAIL_PASSWORD || config.MAIL_PASSWORD === 'password_falso_123') {

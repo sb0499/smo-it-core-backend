@@ -415,6 +415,10 @@ async function initDbSchema() {
       console.log('Adding encrypted_private_key column to usuario table...');
       await pool.query(`ALTER TABLE usuario ADD COLUMN encrypted_private_key TEXT NULL`);
     }
+    if (!usuarioColNames.includes('recibir_notificaciones_correo')) {
+      console.log('Adding recibir_notificaciones_correo column to usuario table...');
+      await pool.query(`ALTER TABLE usuario ADD COLUMN recibir_notificaciones_correo TINYINT(1) NOT NULL DEFAULT 1`);
+    }
 
     // Check and add encrypted_channel_key column to chat_canal_miembro if missing
     const [colsMiembro] = await pool.query<any[]>(`SHOW COLUMNS FROM chat_canal_miembro`);

@@ -14,7 +14,7 @@ export const getUsuarios = async (skip = 0, limit = 100, search = '') => {
   const whereStr = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
 
   const query = `
-    SELECT u.id, u.email, u.nombre_completo, u.is_active, u.created_at, u.updated_at,
+    SELECT u.id, u.email, u.nombre_completo, u.is_active, u.created_at, u.updated_at, u.recibir_notificaciones_correo,
             u.rol_id, r.nombre as rol_nombre, u.must_change_password, u.nivel_soporte, u.grupo_n2,
             GROUP_CONCAT(DISTINCT ue.empresa_id) as empresa_ids,
             GROUP_CONCAT(DISTINCT e_sop.nombre SEPARATOR ',') as empresa_nombres,
@@ -66,7 +66,7 @@ export const getUsuariosPaginated = async (page = 1, limit = 10, search = '') =>
 
   // Get paginated data
   const dataQuery = `
-    SELECT u.id, u.email, u.nombre_completo, u.is_active, u.created_at, u.updated_at,
+    SELECT u.id, u.email, u.nombre_completo, u.is_active, u.created_at, u.updated_at, u.recibir_notificaciones_correo,
             u.rol_id, r.nombre as rol_nombre, u.must_change_password, u.nivel_soporte, u.grupo_n2,
             GROUP_CONCAT(DISTINCT ue.empresa_id) as empresa_ids,
             GROUP_CONCAT(DISTINCT e_sop.nombre SEPARATOR ',') as empresa_nombres,
@@ -121,6 +121,7 @@ export const createUsuario = async (data: {
   must_change_password?: boolean;
   nivel_soporte?: 'N1' | 'N2';
   grupo_n2?: 'Infraestructura' | 'Desarrollo' | null;
+  recibir_notificaciones_correo?: boolean;
   empresa_ids?: number[];
   empresa_inventario_ids?: number[];
 }) => {
@@ -129,8 +130,8 @@ export const createUsuario = async (data: {
   try {
     await conn.beginTransaction();
     const [result] = await conn.query<ResultSetHeader>(
-      `INSERT INTO usuario (email, hashed_password, nombre_completo, is_active, rol_id, must_change_password, nivel_soporte, grupo_n2) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [data.email, hashed, data.nombre_completo, data.is_active ?? true, data.rol_id, data.must_change_password ?? true, data.nivel_soporte || 'N1', data.grupo_n2 || null]
+      `INSERT INTO usuario (email, hashed_password, nombre_completo, is_active, rol_id, must_change_password, nivel_soporte, grupo_n2, recibir_notificaciones_correo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [data.email, hashed, data.nombre_completo, data.is_active ?? true, data.rol_id, data.must_change_password ?? true, data.nivel_soporte || 'N1', data.grupo_n2 || null, data.recibir_notificaciones_correo ?? true]
     );
     const userId = result.insertId;
     if (data.empresa_ids && data.empresa_ids.length > 0) {
@@ -167,6 +168,7 @@ export const updateUsuario = async (userId: number, data: {
   must_change_password?: boolean;
   nivel_soporte?: 'N1' | 'N2';
   grupo_n2?: 'Infraestructura' | 'Desarrollo' | null;
+  recibir_notificaciones_correo?: boolean;
   empresa_ids?: number[];
   empresa_inventario_ids?: number[];
 }) => {
@@ -182,6 +184,7 @@ export const updateUsuario = async (userId: number, data: {
     if (data.must_change_password !== undefined) { sets.push('must_change_password = ?'); vals.push(data.must_change_password); }
     if (data.nivel_soporte !== undefined)   { sets.push('nivel_soporte = ?');   vals.push(data.nivel_soporte); }
     if (data.grupo_n2 !== undefined)        { sets.push('grupo_n2 = ?');        vals.push(data.grupo_n2); }
+    if (data.recibir_notificaciones_correo !== undefined) { sets.push('recibir_notificaciones_correo = ?'); vals.push(data.recibir_notificaciones_correo); }
     if (data.password) {
       sets.push('hashed_password = ?');
       vals.push(await getPasswordHash(data.password));
