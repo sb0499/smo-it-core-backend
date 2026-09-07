@@ -35,6 +35,7 @@ export const getUsuarios = async (skip = 0, limit = 100, search = '') => {
   const [rows] = await pool.query<RowDataPacket[]>(query, params);
   return rows.map(u => ({
     ...u,
+    recibir_notificaciones_correo: u.recibir_notificaciones_correo ?? 1,
     rol: u.rol_nombre,
     empresa_ids: u.empresa_ids ? u.empresa_ids.split(',').map(Number) : [],
     empresa_nombres: u.empresa_nombres ? u.empresa_nombres.split(',') : [],
@@ -86,6 +87,7 @@ export const getUsuariosPaginated = async (page = 1, limit = 10, search = '') =>
   const [dataRows] = await pool.query<RowDataPacket[]>(dataQuery, [...params, limit, skip]);
   const data = dataRows.map(u => ({
     ...u,
+    recibir_notificaciones_correo: u.recibir_notificaciones_correo ?? 1,
     rol: u.rol_nombre,
     empresa_ids: u.empresa_ids ? u.empresa_ids.split(',').map(Number) : [],
     empresa_nombres: u.empresa_nombres ? u.empresa_nombres.split(',') : [],
