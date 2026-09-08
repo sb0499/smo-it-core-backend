@@ -72,6 +72,38 @@ CREATE TABLE IF NOT EXISTS persona (
   FOREIGN KEY (empresa_id) REFERENCES empresa(id)
 ) ENGINE=InnoDB;
 
+-- 7b. sucursal
+CREATE TABLE IF NOT EXISTS sucursal (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  empresa_id INT NOT NULL,
+  nombre VARCHAR(150) NOT NULL,
+  persona_id INT NULL,
+  usuario_id INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (empresa_id) REFERENCES empresa(id) ON DELETE CASCADE,
+  FOREIGN KEY (persona_id) REFERENCES persona(id) ON DELETE SET NULL,
+  FOREIGN KEY (usuario_id) REFERENCES usuario(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- 7c. usuario_sucursal
+CREATE TABLE IF NOT EXISTS usuario_sucursal (
+  usuario_id INT NOT NULL,
+  sucursal_id INT NOT NULL,
+  PRIMARY KEY (usuario_id, sucursal_id),
+  FOREIGN KEY (usuario_id) REFERENCES usuario(id) ON DELETE CASCADE,
+  FOREIGN KEY (sucursal_id) REFERENCES sucursal(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- 7d. usuario_sucursal_inventario
+CREATE TABLE IF NOT EXISTS usuario_sucursal_inventario (
+  usuario_id INT NOT NULL,
+  sucursal_id INT NOT NULL,
+  PRIMARY KEY (usuario_id, sucursal_id),
+  FOREIGN KEY (usuario_id) REFERENCES usuario(id) ON DELETE CASCADE,
+  FOREIGN KEY (sucursal_id) REFERENCES sucursal(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
 -- 8. activo
 CREATE TABLE IF NOT EXISTS activo (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -130,6 +162,7 @@ CREATE TABLE IF NOT EXISTS ticket (
   descripcion TEXT NOT NULL,
   categoria VARCHAR(100) NOT NULL,
   empresa_id INT,
+  sucursal_id INT,
   area_solicitante VARCHAR(100),
   persona_solicitante VARCHAR(150),
   medio_solicitud ENUM('Plataforma','WhatsApp','Llamada','Correo','Presencial','Automático (Recurrente)','Automático (Inventario)') DEFAULT 'Plataforma',
@@ -148,6 +181,7 @@ CREATE TABLE IF NOT EXISTS ticket (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (empresa_id) REFERENCES empresa(id),
+  FOREIGN KEY (sucursal_id) REFERENCES sucursal(id) ON DELETE SET NULL,
   FOREIGN KEY (creador_id) REFERENCES usuario(id),
   FOREIGN KEY (tecnico_id) REFERENCES usuario(id)
 ) ENGINE=InnoDB;

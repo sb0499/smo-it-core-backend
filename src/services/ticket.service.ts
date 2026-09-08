@@ -9,10 +9,12 @@ export const getTickets = async (currentUser: any, skip = 0, limit = 100) => {
     SELECT t.*,
            u.nombre_completo as tecnico_nombre,
            e.nombre as empresa_nombre,
+           s.nombre as sucursal_nombre,
            JSON_UNQUOTE(t.bitacora_dinamica) as bitacora_dinamica
     FROM ticket t
     LEFT JOIN usuario u ON t.tecnico_id = u.id
     LEFT JOIN empresa e ON t.empresa_id = e.id
+    LEFT JOIN sucursal s ON t.sucursal_id = s.id
   `;
   const params: any[] = [];
 
@@ -156,12 +158,12 @@ export const createTicket = async (data: any, currentUser: any) => {
 
   const [result] = await pool.query<ResultSetHeader>(
     `INSERT INTO ticket
-      (titulo, descripcion, categoria, empresa_id, area_solicitante, persona_solicitante,
+      (titulo, descripcion, categoria, empresa_id, sucursal_id, area_solicitante, persona_solicitante,
        medio_solicitud, fecha_final_tentativa, avance_proceso, observaciones, prioridad,
        estado, nivel_soporte, bitacora_dinamica, creador_id, tecnico_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      data.titulo, data.descripcion, data.categoria, data.empresa_id || null,
+      data.titulo, data.descripcion, data.categoria, data.empresa_id || null, data.sucursal_id || null,
       data.area_solicitante || null, data.persona_solicitante || null,
       data.medio_solicitud || 'Plataforma', data.fecha_final_tentativa || null,
       data.avance_proceso ?? 0, data.observaciones || null,
@@ -248,10 +250,12 @@ export const createTicket = async (data: any, currentUser: any) => {
     `SELECT t.*, 
             u.nombre_completo as tecnico_nombre, 
             e.nombre as empresa_nombre, 
+            s.nombre as sucursal_nombre,
             JSON_UNQUOTE(t.bitacora_dinamica) as bitacora_dinamica
      FROM ticket t 
      LEFT JOIN usuario u ON t.tecnico_id = u.id 
      LEFT JOIN empresa e ON t.empresa_id = e.id
+     LEFT JOIN sucursal s ON t.sucursal_id = s.id
      WHERE t.id = ?`,
     [result.insertId]
   );
@@ -334,7 +338,7 @@ export const updateTicket = async (ticketId: number, data: any, currentUser?: an
 
   const sets: string[] = [];
   const vals: any[] = [];
-  const allowed = ['titulo', 'descripcion', 'categoria', 'empresa_id', 'area_solicitante', 'persona_solicitante',
+  const allowed = ['titulo', 'descripcion', 'categoria', 'empresa_id', 'sucursal_id', 'area_solicitante', 'persona_solicitante',
     'medio_solicitud', 'fecha_final_tentativa', 'avance_proceso', 'observaciones', 'prioridad',
     'estado', 'tecnico_id', 'nivel_soporte', 'grupo_n2', 'sla_paused_at', 'sla_acumulado_pausa_segundos'];
   for (const field of allowed) {
@@ -378,10 +382,11 @@ export const updateTicket = async (ticketId: number, data: any, currentUser?: an
   }
 
   const [rows] = await pool.query<RowDataPacket[]>(`
-    SELECT t.*, u.nombre_completo as tecnico_nombre, e.nombre as empresa_nombre 
+    SELECT t.*, u.nombre_completo as tecnico_nombre, e.nombre as empresa_nombre, s.nombre as sucursal_nombre 
     FROM ticket t 
     LEFT JOIN usuario u ON t.tecnico_id = u.id 
     LEFT JOIN empresa e ON t.empresa_id = e.id 
+    LEFT JOIN sucursal s ON t.sucursal_id = s.id
     WHERE t.id = ?`, [ticketId]);
   const t = rows[0];
   return {
@@ -539,10 +544,11 @@ export const escalarTicketAN2 = async (
   }
 
   const [updatedRows] = await pool.query<RowDataPacket[]>(
-    `SELECT t.*, u.nombre_completo as tecnico_nombre, e.nombre as empresa_nombre 
+    `SELECT t.*, u.nombre_completo as tecnico_nombre, e.nombre as empresa_nombre, s.nombre as sucursal_nombre 
      FROM ticket t 
      LEFT JOIN usuario u ON t.tecnico_id = u.id 
      LEFT JOIN empresa e ON t.empresa_id = e.id 
+     LEFT JOIN sucursal s ON t.sucursal_id = s.id
      WHERE t.id = ?`,
     [ticketId]
   );
@@ -729,10 +735,12 @@ export const getTicketsPaginated = async (
     SELECT t.*,
            u.nombre_completo as tecnico_nombre,
            e.nombre as empresa_nombre,
+           s.nombre as sucursal_nombre,
            JSON_UNQUOTE(t.bitacora_dinamica) as bitacora_dinamica
     FROM ticket t
     LEFT JOIN usuario u ON t.tecnico_id = u.id
     LEFT JOIN empresa e ON t.empresa_id = e.id
+    LEFT JOIN sucursal s ON t.sucursal_id = s.id
     ${whereStr}
     ORDER BY t.created_at DESC
     LIMIT ? OFFSET ?

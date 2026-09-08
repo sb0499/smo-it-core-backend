@@ -19,13 +19,21 @@ export const getUsuarios = async (skip = 0, limit = 100, search = '') => {
             GROUP_CONCAT(DISTINCT ue.empresa_id) as empresa_ids,
             GROUP_CONCAT(DISTINCT e_sop.nombre SEPARATOR ',') as empresa_nombres,
             GROUP_CONCAT(DISTINCT uei.empresa_id) as empresa_inventario_ids,
-            GROUP_CONCAT(DISTINCT e_inv.nombre SEPARATOR ',') as empresa_inventario_nombres
+            GROUP_CONCAT(DISTINCT e_inv.nombre SEPARATOR ',') as empresa_inventario_nombres,
+            GROUP_CONCAT(DISTINCT us.sucursal_id) as sucursal_ids,
+            GROUP_CONCAT(DISTINCT s.nombre SEPARATOR ',') as sucursal_nombres,
+            GROUP_CONCAT(DISTINCT usi.sucursal_id) as sucursal_inventario_ids,
+            GROUP_CONCAT(DISTINCT si.nombre SEPARATOR ',') as sucursal_inventario_nombres
      FROM usuario u
      JOIN rol r ON u.rol_id = r.id
      LEFT JOIN usuario_empresa ue ON u.id = ue.usuario_id
      LEFT JOIN empresa e_sop ON ue.empresa_id = e_sop.id
      LEFT JOIN usuario_empresa_inventario uei ON u.id = uei.usuario_id
      LEFT JOIN empresa e_inv ON uei.empresa_id = e_inv.id
+     LEFT JOIN usuario_sucursal us ON u.id = us.usuario_id
+     LEFT JOIN sucursal s ON us.sucursal_id = s.id
+     LEFT JOIN usuario_sucursal_inventario usi ON u.id = usi.usuario_id
+     LEFT JOIN sucursal si ON usi.sucursal_id = si.id
      ${whereStr}
      GROUP BY u.id
      LIMIT ? OFFSET ?
@@ -40,7 +48,11 @@ export const getUsuarios = async (skip = 0, limit = 100, search = '') => {
     empresa_ids: u.empresa_ids ? u.empresa_ids.split(',').map(Number) : [],
     empresa_nombres: u.empresa_nombres ? u.empresa_nombres.split(',') : [],
     empresa_inventario_ids: u.empresa_inventario_ids ? u.empresa_inventario_ids.split(',').map(Number) : [],
-    empresa_inventario_nombres: u.empresa_inventario_nombres ? u.empresa_inventario_nombres.split(',') : []
+    empresa_inventario_nombres: u.empresa_inventario_nombres ? u.empresa_inventario_nombres.split(',') : [],
+    sucursal_ids: u.sucursal_ids ? u.sucursal_ids.split(',').map(Number) : [],
+    sucursal_nombres: u.sucursal_nombres ? u.sucursal_nombres.split(',') : [],
+    sucursal_inventario_ids: u.sucursal_inventario_ids ? u.sucursal_inventario_ids.split(',').map(Number) : [],
+    sucursal_inventario_nombres: u.sucursal_inventario_nombres ? u.sucursal_inventario_nombres.split(',') : []
   }));
 };
 
@@ -72,13 +84,21 @@ export const getUsuariosPaginated = async (page = 1, limit = 10, search = '') =>
             GROUP_CONCAT(DISTINCT ue.empresa_id) as empresa_ids,
             GROUP_CONCAT(DISTINCT e_sop.nombre SEPARATOR ',') as empresa_nombres,
             GROUP_CONCAT(DISTINCT uei.empresa_id) as empresa_inventario_ids,
-            GROUP_CONCAT(DISTINCT e_inv.nombre SEPARATOR ',') as empresa_inventario_nombres
+            GROUP_CONCAT(DISTINCT e_inv.nombre SEPARATOR ',') as empresa_inventario_nombres,
+            GROUP_CONCAT(DISTINCT us.sucursal_id) as sucursal_ids,
+            GROUP_CONCAT(DISTINCT s.nombre SEPARATOR ',') as sucursal_nombres,
+            GROUP_CONCAT(DISTINCT usi.sucursal_id) as sucursal_inventario_ids,
+            GROUP_CONCAT(DISTINCT si.nombre SEPARATOR ',') as sucursal_inventario_nombres
      FROM usuario u
      JOIN rol r ON u.rol_id = r.id
      LEFT JOIN usuario_empresa ue ON u.id = ue.usuario_id
      LEFT JOIN empresa e_sop ON ue.empresa_id = e_sop.id
      LEFT JOIN usuario_empresa_inventario uei ON u.id = uei.usuario_id
      LEFT JOIN empresa e_inv ON uei.empresa_id = e_inv.id
+     LEFT JOIN usuario_sucursal us ON u.id = us.usuario_id
+     LEFT JOIN sucursal s ON us.sucursal_id = s.id
+     LEFT JOIN usuario_sucursal_inventario usi ON u.id = usi.usuario_id
+     LEFT JOIN sucursal si ON usi.sucursal_id = si.id
      ${whereStr}
      GROUP BY u.id
      ORDER BY u.nombre_completo ASC
@@ -92,7 +112,11 @@ export const getUsuariosPaginated = async (page = 1, limit = 10, search = '') =>
     empresa_ids: u.empresa_ids ? u.empresa_ids.split(',').map(Number) : [],
     empresa_nombres: u.empresa_nombres ? u.empresa_nombres.split(',') : [],
     empresa_inventario_ids: u.empresa_inventario_ids ? u.empresa_inventario_ids.split(',').map(Number) : [],
-    empresa_inventario_nombres: u.empresa_inventario_nombres ? u.empresa_inventario_nombres.split(',') : []
+    empresa_inventario_nombres: u.empresa_inventario_nombres ? u.empresa_inventario_nombres.split(',') : [],
+    sucursal_ids: u.sucursal_ids ? u.sucursal_ids.split(',').map(Number) : [],
+    sucursal_nombres: u.sucursal_nombres ? u.sucursal_nombres.split(',') : [],
+    sucursal_inventario_ids: u.sucursal_inventario_ids ? u.sucursal_inventario_ids.split(',').map(Number) : [],
+    sucursal_inventario_nombres: u.sucursal_inventario_nombres ? u.sucursal_inventario_nombres.split(',') : []
   }));
 
   return { total, page, limit, data };
@@ -126,6 +150,8 @@ export const createUsuario = async (data: {
   recibir_notificaciones_correo?: boolean;
   empresa_ids?: number[];
   empresa_inventario_ids?: number[];
+  sucursal_ids?: number[];
+  sucursal_inventario_ids?: number[];
 }) => {
   const hashed = await getPasswordHash(data.password);
   const conn = await pool.getConnection();
@@ -144,6 +170,16 @@ export const createUsuario = async (data: {
     if (data.empresa_inventario_ids && data.empresa_inventario_ids.length > 0) {
       for (const empId of data.empresa_inventario_ids) {
         await conn.query(`INSERT INTO usuario_empresa_inventario (usuario_id, empresa_id) VALUES (?, ?)`, [userId, empId]);
+      }
+    }
+    if (data.sucursal_ids && data.sucursal_ids.length > 0) {
+      for (const sucId of data.sucursal_ids) {
+        await conn.query(`INSERT INTO usuario_sucursal (usuario_id, sucursal_id) VALUES (?, ?)`, [userId, sucId]);
+      }
+    }
+    if (data.sucursal_inventario_ids && data.sucursal_inventario_ids.length > 0) {
+      for (const sucId of data.sucursal_inventario_ids) {
+        await conn.query(`INSERT INTO usuario_sucursal_inventario (usuario_id, sucursal_id) VALUES (?, ?)`, [userId, sucId]);
       }
     }
     await conn.commit();
@@ -173,6 +209,8 @@ export const updateUsuario = async (userId: number, data: {
   recibir_notificaciones_correo?: boolean;
   empresa_ids?: number[];
   empresa_inventario_ids?: number[];
+  sucursal_ids?: number[];
+  sucursal_inventario_ids?: number[];
 }) => {
   const conn = await pool.getConnection();
   try {
@@ -205,6 +243,18 @@ export const updateUsuario = async (userId: number, data: {
       await conn.query(`DELETE FROM usuario_empresa_inventario WHERE usuario_id = ?`, [userId]);
       for (const empId of data.empresa_inventario_ids) {
         await conn.query(`INSERT INTO usuario_empresa_inventario (usuario_id, empresa_id) VALUES (?, ?)`, [userId, empId]);
+      }
+    }
+    if (data.sucursal_ids !== undefined) {
+      await conn.query(`DELETE FROM usuario_sucursal WHERE usuario_id = ?`, [userId]);
+      for (const sucId of data.sucursal_ids) {
+        await conn.query(`INSERT INTO usuario_sucursal (usuario_id, sucursal_id) VALUES (?, ?)`, [userId, sucId]);
+      }
+    }
+    if (data.sucursal_inventario_ids !== undefined) {
+      await conn.query(`DELETE FROM usuario_sucursal_inventario WHERE usuario_id = ?`, [userId]);
+      for (const sucId of data.sucursal_inventario_ids) {
+        await conn.query(`INSERT INTO usuario_sucursal_inventario (usuario_id, sucursal_id) VALUES (?, ?)`, [userId, sucId]);
       }
     }
     await conn.commit();
@@ -244,7 +294,6 @@ export const deleteUsuario = async (userId: number) => {
   try {
     await conn.beginTransaction();
 
-    // programmatically nullify referencing columns
     await conn.query('UPDATE ticket SET creador_id = NULL WHERE creador_id = ?', [userId]);
     await conn.query('UPDATE ticket SET tecnico_id = NULL WHERE tecnico_id = ?', [userId]);
     await conn.query('UPDATE proyecto SET creador_id = NULL WHERE creador_id = ?', [userId]);
@@ -259,7 +308,6 @@ export const deleteUsuario = async (userId: number) => {
     await conn.query('UPDATE entrega_credencial SET entregado_por_id = NULL WHERE entregado_por_id = ?', [userId]);
     await conn.query('UPDATE guardia_feriado SET tecnico_id = NULL WHERE tecnico_id = ?', [userId]);
 
-    // Now delete the user
     await conn.query('DELETE FROM usuario WHERE id = ?', [userId]);
 
     await conn.commit();
@@ -271,4 +319,3 @@ export const deleteUsuario = async (userId: number) => {
     conn.release();
   }
 };
-

@@ -22,6 +22,7 @@ import { tipoEquiposRouter } from './routes/tipo-equipos.routes';
 import { bodegasRouter } from './routes/bodegas.routes';
 import { credencialesRouter } from './routes/credenciales.routes';
 import { hostingsDominiosRouter } from './routes/hosting-dominio.routes';
+import { categoriasRouter } from './routes/categorias.routes';
 import path from 'path';
 
 const app = express();
@@ -77,6 +78,7 @@ app.use(`${API}/consumibles`, consumiblesRouter);
 app.use(`${API}/soportes-recurrentes`, recurrenciaRouter);
 app.use(`${API}/proveedores`, proveedoresRouter);
 app.use(`${API}/empresas`, empresasRouter);
+app.use(`${API}/categorias`, categoriasRouter);
 app.use(`${API}/notificaciones`, notificacionesRouter);
 app.use(`${API}/tipo-equipos`, tipoEquiposRouter);
 app.use(`${API}/bodegas`, bodegasRouter);
