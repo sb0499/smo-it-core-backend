@@ -17,7 +17,7 @@ export const getSoportesRecurrentes = async (req: AuthRequest, res: Response): P
 
 export const createSoporteRecurrente = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const item = await service.createSoporteRecurrente(req.body);
+    const item = await service.createSoporteRecurrente(req.body, req.currentUser);
     res.status(201).json(item);
   } catch (err: any) {
     res.status(400).json({ detail: 'Error al registrar soporte recurrente', error: err.message });
@@ -27,9 +27,9 @@ export const createSoporteRecurrente = async (req: AuthRequest, res: Response): 
 export const updateSoporteRecurrente = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const id = parseInt(req.params.recurrencia_id);
-    const item = await service.updateSoporteRecurrente(id, req.body);
+    const item = await service.updateSoporteRecurrente(id, req.body, req.currentUser);
     if (!item) {
-      res.status(404).json({ detail: 'Soporte recurrente no encontrado' });
+      res.status(404).json({ detail: 'Soporte recurrente no encontrado o no tienes permiso para modificarlo' });
       return;
     }
     res.json(item);
@@ -41,9 +41,9 @@ export const updateSoporteRecurrente = async (req: AuthRequest, res: Response): 
 export const deleteSoporteRecurrente = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const id = parseInt(req.params.recurrencia_id);
-    const item = await service.deleteSoporteRecurrente(id);
+    const item = await service.deleteSoporteRecurrente(id, req.currentUser);
     if (!item) {
-      res.status(404).json({ detail: 'Soporte recurrente no encontrado' });
+      res.status(404).json({ detail: 'Soporte recurrente no encontrado o no tienes permiso para eliminarlo' });
       return;
     }
     res.json({ message: 'Soporte recurrente eliminado correctamente' });

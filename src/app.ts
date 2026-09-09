@@ -23,6 +23,7 @@ import { bodegasRouter } from './routes/bodegas.routes';
 import { credencialesRouter } from './routes/credenciales.routes';
 import { hostingsDominiosRouter } from './routes/hosting-dominio.routes';
 import { categoriasRouter } from './routes/categorias.routes';
+import { kbRouter } from './routes/kb.routes';
 import path from 'path';
 
 const app = express();
@@ -84,6 +85,7 @@ app.use(`${API}/tipo-equipos`, tipoEquiposRouter);
 app.use(`${API}/bodegas`, bodegasRouter);
 app.use(`${API}/credenciales`, credencialesRouter);
 app.use(`${API}/hostings-dominios`, hostingsDominiosRouter);
+app.use(`${API}/base-conocimiento`, kbRouter);
 
 // Root health check
 app.get('/', (_req, res) => {

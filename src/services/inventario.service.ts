@@ -10,11 +10,20 @@ export const getActivos = async (
   estado = '',
   empresaIds?: number[],
   custodioId?: number,
-  empresaIdFilter?: number
+  empresaIdFilter?: number,
+  sucursalIds?: number[],
+  sucursalIdFilter?: number
 ) => {
   const skip = (page - 1) * limit;
   let whereClauses: string[] = [];
   const params: any[] = [];
+
+  if (sucursalIds && sucursalIds.length > 0) {
+    whereClauses.push(`a.sucursal_id IN (${sucursalIds.map(() => '?').join(',')})`);
+    params.push(...sucursalIds);
+  } else if (sucursalIds) {
+    whereClauses.push('1=0');
+  }
 
   if (empresaIds && empresaIds.length > 0) {
     whereClauses.push(`a.empresa_id IN (${empresaIds.map(() => '?').join(',')})`);
@@ -26,6 +35,11 @@ export const getActivos = async (
   if (empresaIdFilter && empresaIdFilter > 0) {
     whereClauses.push('a.empresa_id = ?');
     params.push(empresaIdFilter);
+  }
+
+  if (sucursalIdFilter && sucursalIdFilter > 0) {
+    whereClauses.push('a.sucursal_id = ?');
+    params.push(sucursalIdFilter);
   }
 
   if (custodioId && custodioId > 0) {
@@ -54,9 +68,9 @@ export const getActivos = async (
   if (search) {
     const searchWildcard = `%${search}%`;
     whereClauses.push(
-      `(a.codigo LIKE ? OR a.serial LIKE ? OR a.marca LIKE ? OR a.modelo LIKE ? OR e.nombre LIKE ? OR te.nombre LIKE ? OR p.nombre LIKE ? OR p.cedula LIKE ?)`
+      `(a.codigo LIKE ? OR a.serial LIKE ? OR a.marca LIKE ? OR a.modelo LIKE ? OR e.nombre LIKE ? OR te.nombre LIKE ? OR p.nombre LIKE ? OR p.cedula LIKE ? OR suc.nombre LIKE ?)`
     );
-    params.push(searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard);
+    params.push(searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard);
   }
 
   const whereStr = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
@@ -68,6 +82,7 @@ export const getActivos = async (
     LEFT JOIN egreso_bodega eb ON a.egreso_bodega_id = eb.id
     LEFT JOIN persona p ON p.id = COALESCE(a.persona_id, eb.custodio_id)
     LEFT JOIN empresa e ON a.empresa_id = e.id 
+    LEFT JOIN sucursal suc ON a.sucursal_id = suc.id
     LEFT JOIN tipo_equipo te ON a.tipo_equipo_id = te.id
     ${whereStr}
   `;
@@ -80,13 +95,14 @@ export const getActivos = async (
            p.departamento as persona_departamento, p.cargo as persona_cargo,
            prov.nombre as proveedor_nombre, prov.contacto as proveedor_contacto,
            te.nombre as tipo_equipo_nombre, e.nombre as empresa_nombre,
-           b.nombre as bodega_nombre
+           b.nombre as bodega_nombre, suc.nombre as sucursal_nombre
     FROM activo a
     LEFT JOIN egreso_bodega eb ON a.egreso_bodega_id = eb.id
     LEFT JOIN persona p ON p.id = COALESCE(a.persona_id, eb.custodio_id)
     LEFT JOIN proveedor prov ON a.proveedor_id = prov.id
     LEFT JOIN tipo_equipo te ON a.tipo_equipo_id = te.id
     LEFT JOIN empresa e ON a.empresa_id = e.id
+    LEFT JOIN sucursal suc ON a.sucursal_id = suc.id
     LEFT JOIN bodega b ON a.bodega_id = b.id
     ${whereStr}
     ORDER BY a.created_at DESC
@@ -496,6 +512,7 @@ export const generateCodigoIngreso = async (empresaId: number): Promise<string> 
 export const createIngresoBodega = async (
   data: {
     empresa_id: number;
+    sucursal_id?: number;
     proveedor_id?: number;
     nro_orden_compra: string;
     nro_factura?: string;
@@ -522,6 +539,16 @@ export const createIngresoBodega = async (
 
   const codigoIngreso = await generateCodigoIngreso(data.empresa_id);
 
+  // Default sucursal for company if not provided
+  let sucursalId = data.sucursal_id || null;
+  if (!sucursalId) {
+    const [sucRows] = await pool.query<RowDataPacket[]>(
+      'SELECT id FROM sucursal WHERE empresa_id = ? ORDER BY id ASC LIMIT 1',
+      [data.empresa_id]
+    );
+    sucursalId = sucRows[0]?.id || null;
+  }
+
   // Default bodega for company if not provided per asset
   const [bodegaRows] = await pool.query<RowDataPacket[]>(
     'SELECT id FROM bodega WHERE empresa_id = ? ORDER BY id ASC LIMIT 1',
@@ -533,11 +560,12 @@ export const createIngresoBodega = async (
   const revisadoPorCargo = data.revisado_por_cargo || 'GERENTE DE TI';
 
   const [result] = await pool.query<ResultSetHeader>(
-    `INSERT INTO ingreso_bodega (codigo_ingreso, empresa_id, proveedor_id, nro_orden_compra, nro_factura, nro_solicitud_pago, fecha_compra, fecha_ingreso, descripcion, realizado_por_id, revisado_por, revisado_por_cargo)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO ingreso_bodega (codigo_ingreso, empresa_id, sucursal_id, proveedor_id, nro_orden_compra, nro_factura, nro_solicitud_pago, fecha_compra, fecha_ingreso, descripcion, realizado_por_id, revisado_por, revisado_por_cargo)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       codigoIngreso,
       data.empresa_id,
+      sucursalId,
       data.proveedor_id || null,
       data.nro_orden_compra,
       data.nro_factura || null,
@@ -559,8 +587,8 @@ export const createIngresoBodega = async (
     const bodegaId = item.bodega_id || defaultBodegaId;
 
     const [activoResult] = await pool.query<ResultSetHeader>(
-      `INSERT INTO activo (codigo, serial, marca, modelo, especificaciones, estado, proveedor_id, fecha_compra, tipo_equipo_id, empresa_id, bodega_id, ingreso_bodega_id)
-       VALUES (?, ?, ?, ?, ?, 'Stock', ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO activo (codigo, serial, marca, modelo, especificaciones, estado, proveedor_id, fecha_compra, tipo_equipo_id, empresa_id, sucursal_id, bodega_id, ingreso_bodega_id)
+       VALUES (?, ?, ?, ?, ?, 'Stock', ?, ?, ?, ?, ?, ?, ?)`,
       [
         finalCodigo,
         item.serial || null,
@@ -571,6 +599,7 @@ export const createIngresoBodega = async (
         data.fecha_compra,
         item.tipo_equipo_id,
         data.empresa_id,
+        sucursalId,
         bodegaId,
         ingresoId
       ]
@@ -757,6 +786,7 @@ export const generateCodigoEgreso = async (empresaId: number): Promise<string> =
 export const createEgresoBodega = async (
   data: {
     empresa_id: number;
+    sucursal_id?: number;
     custodio_id: number;
     area?: string;
     observaciones?: string;
@@ -774,12 +804,22 @@ export const createEgresoBodega = async (
   const revisadoPor = data.revisado_por || 'Paulina Porras';
   const revisadoPorCargo = data.revisado_por_cargo || 'JEFE DE SISTEMAS';
 
+  let sucursalId = data.sucursal_id || null;
+  if (!sucursalId) {
+    const [sucRows] = await pool.query<RowDataPacket[]>(
+      'SELECT id FROM sucursal WHERE empresa_id = ? ORDER BY id ASC LIMIT 1',
+      [data.empresa_id]
+    );
+    sucursalId = sucRows[0]?.id || null;
+  }
+
   const [result] = await pool.query<ResultSetHeader>(
-    `INSERT INTO egreso_bodega (codigo_egreso, empresa_id, custodio_id, area, observaciones, realizado_por_id, revisado_por, revisado_por_cargo)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO egreso_bodega (codigo_egreso, empresa_id, sucursal_id, custodio_id, area, observaciones, realizado_por_id, revisado_por, revisado_por_cargo)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       codigoEgreso,
       data.empresa_id,
+      sucursalId,
       data.custodio_id,
       data.area || null,
       data.observaciones || null,
@@ -971,9 +1011,11 @@ export const generateCodigoRecepcion = async (empresaId: number): Promise<string
 export const createRecepcionBodega = async (
   data: {
     empresa_id: number;
+    sucursal_id?: number;
     persona_entrega_id: number;
     area?: string;
     bodega_id?: number;
+    estado_destino?: 'Stock' | 'Mantenimiento' | 'Baja';
     observaciones?: string;
     revisado_por?: string;
     revisado_por_cargo?: string;
@@ -985,22 +1027,35 @@ export const createRecepcionBodega = async (
     throw new Error('Debe seleccionar al menos un activo para registrar la recepción.');
   }
 
+  const estadoDestino = data.estado_destino && ['Stock', 'Mantenimiento', 'Baja'].includes(data.estado_destino) ? data.estado_destino : 'Stock';
+
   const codigoRecepcion = await generateCodigoRecepcion(data.empresa_id);
   const revisadoPor = data.revisado_por || 'Paulina Porras';
   const revisadoPorCargo = data.revisado_por_cargo || 'JEFE DE SISTEMAS';
 
+  let sucursalId = data.sucursal_id || null;
+  if (!sucursalId) {
+    const [sucRows] = await pool.query<RowDataPacket[]>(
+      'SELECT id FROM sucursal WHERE empresa_id = ? ORDER BY id ASC LIMIT 1',
+      [data.empresa_id]
+    );
+    sucursalId = sucRows[0]?.id || null;
+  }
+
   // 1. Insert into recepcion_bodega
   const [result] = await pool.query<ResultSetHeader>(
     `INSERT INTO recepcion_bodega 
-     (codigo_recepcion, empresa_id, persona_entrega_id, recibido_por_id, area, bodega_id, observaciones, revisado_por, revisado_por_cargo)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (codigo_recepcion, empresa_id, sucursal_id, persona_entrega_id, recibido_por_id, area, bodega_id, estado_destino, observaciones, revisado_por, revisado_por_cargo)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       codigoRecepcion,
       data.empresa_id,
+      sucursalId,
       data.persona_entrega_id,
       usuarioId || null,
       data.area || null,
       data.bodega_id || null,
+      estadoDestino,
       data.observaciones || null,
       revisadoPor,
       revisadoPorCargo
@@ -1017,15 +1072,16 @@ export const createRecepcionBodega = async (
   const todayStr = new Date().toISOString().split('T')[0];
   const [ingresoResult] = await pool.query<ResultSetHeader>(
     `INSERT INTO ingreso_bodega 
-     (codigo_ingreso, empresa_id, proveedor_id, nro_orden_compra, nro_factura, fecha_compra, fecha_ingreso, descripcion, realizado_por_id, revisado_por, revisado_por_cargo, tipo_ingreso, recepcion_bodega_id)
-     VALUES (?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, 'DEVOLUCION', ?)`,
+     (codigo_ingreso, empresa_id, sucursal_id, proveedor_id, nro_orden_compra, nro_factura, fecha_compra, fecha_ingreso, descripcion, realizado_por_id, revisado_por, revisado_por_cargo, tipo_ingreso, recepcion_bodega_id)
+     VALUES (?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, 'DEVOLUCION', ?)`,
     [
       codigoIngreso,
       data.empresa_id,
+      sucursalId,
       codigoRecepcion,
       todayStr,
       todayStr,
-      `Ingreso a bodega por devolución de activo(s) según Acta de Recepción ${codigoRecepcion}`,
+      `Ingreso a bodega por devolución de activo(s) según Acta de Recepción ${codigoRecepcion} (Estado: ${estadoDestino})`,
       usuarioId || null,
       revisadoPor,
       revisadoPorCargo,
@@ -1042,8 +1098,8 @@ export const createRecepcionBodega = async (
   const fieldNames = colsActivo.map((c: any) => c.Field);
 
   for (const activoId of data.activo_ids) {
-    const setClauses = ["estado = 'Stock'", "bodega_id = COALESCE(?, bodega_id)", "recepcion_bodega_id = ?", "ingreso_bodega_id = ?"];
-    const setParams: any[] = [data.bodega_id || null, recepcionId, ingresoId];
+    const setClauses = ["estado = ?", "bodega_id = COALESCE(?, bodega_id)", "recepcion_bodega_id = ?", "ingreso_bodega_id = ?"];
+    const setParams: any[] = [estadoDestino, data.bodega_id || null, recepcionId, ingresoId];
 
     if (fieldNames.includes('persona_id')) {
       setClauses.push("persona_id = NULL");
@@ -1069,7 +1125,7 @@ export const createRecepcionBodega = async (
         activoId,
         data.persona_entrega_id,
         usuarioId || null,
-        `Devolución a bodega según Acta de Recepción ${codigoRecepcion}. ${data.observaciones || ''}`
+        `Devolución a bodega según Acta de Recepción ${codigoRecepcion} (Estado final: ${estadoDestino}). ${data.observaciones || ''}`
       ]
     );
   }

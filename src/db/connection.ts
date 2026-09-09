@@ -384,6 +384,7 @@ async function initDbSchema() {
         bodega_id INT NULL,
         observaciones TEXT NULL,
         ingreso_bodega_id INT NULL,
+        estado_destino VARCHAR(50) NOT NULL DEFAULT 'Stock',
         fecha_recepcion DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         revisado_por VARCHAR(150) NOT NULL DEFAULT 'Paulina Porras',
         revisado_por_cargo VARCHAR(150) NOT NULL DEFAULT 'GERENTE DE TI',
@@ -398,6 +399,69 @@ async function initDbSchema() {
       console.log('Adding recepcion_bodega_id column to activo table...');
       await pool.query(`ALTER TABLE activo ADD COLUMN recepcion_bodega_id INT NULL`);
       await pool.query(`ALTER TABLE activo ADD CONSTRAINT fk_activo_recepcion_bodega FOREIGN KEY (recepcion_bodega_id) REFERENCES recepcion_bodega(id) ON DELETE SET NULL`);
+    }
+
+    if (!colNames.includes('sucursal_id')) {
+      console.log('Adding sucursal_id column to activo table...');
+      await pool.query(`ALTER TABLE activo ADD COLUMN sucursal_id INT NULL`);
+      await pool.query(`ALTER TABLE activo ADD CONSTRAINT fk_activo_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursal(id) ON DELETE SET NULL`);
+    }
+
+    const [colsRecepcion] = await pool.query<any[]>(`SHOW COLUMNS FROM recepcion_bodega`);
+    const recepcionColNames = colsRecepcion.map((c: any) => c.Field);
+    if (!recepcionColNames.includes('estado_destino')) {
+      console.log('Adding estado_destino column to recepcion_bodega table...');
+      await pool.query(`ALTER TABLE recepcion_bodega ADD COLUMN estado_destino VARCHAR(50) NOT NULL DEFAULT 'Stock'`);
+    }
+    if (!recepcionColNames.includes('sucursal_id')) {
+      console.log('Adding sucursal_id column to recepcion_bodega table...');
+      await pool.query(`ALTER TABLE recepcion_bodega ADD COLUMN sucursal_id INT NULL`);
+      await pool.query(`ALTER TABLE recepcion_bodega ADD CONSTRAINT fk_recepcion_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursal(id) ON DELETE SET NULL`);
+    }
+
+    if (!ingresoColNames.includes('sucursal_id')) {
+      console.log('Adding sucursal_id column to ingreso_bodega table...');
+      await pool.query(`ALTER TABLE ingreso_bodega ADD COLUMN sucursal_id INT NULL`);
+      await pool.query(`ALTER TABLE ingreso_bodega ADD CONSTRAINT fk_ingreso_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursal(id) ON DELETE SET NULL`);
+    }
+
+    const [colsEgreso] = await pool.query<any[]>(`SHOW COLUMNS FROM egreso_bodega`);
+    const egresoColNames = colsEgreso.map((c: any) => c.Field);
+    if (!egresoColNames.includes('sucursal_id')) {
+      console.log('Adding sucursal_id column to egreso_bodega table...');
+      await pool.query(`ALTER TABLE egreso_bodega ADD COLUMN sucursal_id INT NULL`);
+      await pool.query(`ALTER TABLE egreso_bodega ADD CONSTRAINT fk_egreso_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursal(id) ON DELETE SET NULL`);
+    }
+
+    const [colsBodega] = await pool.query<any[]>(`SHOW COLUMNS FROM bodega`);
+    const bodegaColNames = colsBodega.map((c: any) => c.Field);
+    if (!bodegaColNames.includes('sucursal_id')) {
+      console.log('Adding sucursal_id column to bodega table...');
+      await pool.query(`ALTER TABLE bodega ADD COLUMN sucursal_id INT NULL`);
+      await pool.query(`ALTER TABLE bodega ADD CONSTRAINT fk_bodega_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursal(id) ON DELETE SET NULL`);
+    }
+
+    // Backfill sucursal_id for existing records where sucursal_id IS NULL
+    try {
+      console.log('Backfilling sucursal_id for existing assets and bodegas...');
+      await pool.query(`
+        UPDATE activo a
+        JOIN (
+          SELECT empresa_id, MIN(id) as first_sucursal_id FROM sucursal GROUP BY empresa_id
+        ) s ON a.empresa_id = s.empresa_id
+        SET a.sucursal_id = s.first_sucursal_id
+        WHERE a.sucursal_id IS NULL
+      `);
+      await pool.query(`
+        UPDATE bodega b
+        JOIN (
+          SELECT empresa_id, MIN(id) as first_sucursal_id FROM sucursal GROUP BY empresa_id
+        ) s ON b.empresa_id = s.empresa_id
+        SET b.sucursal_id = s.first_sucursal_id
+        WHERE b.sucursal_id IS NULL
+      `);
+    } catch (err) {
+      console.log('Backfill sucursal_id note:', err);
     }
 
     // Purge old chat messages for E2EE
@@ -473,6 +537,49 @@ async function initDbSchema() {
         CONSTRAINT fk_hd_empresa FOREIGN KEY (empresa_id) REFERENCES empresa(id) ON DELETE SET NULL,
         CONSTRAINT fk_hd_proveedor FOREIGN KEY (proveedor_id) REFERENCES proveedor(id) ON DELETE SET NULL,
         CONSTRAINT fk_hd_creador FOREIGN KEY (creador_id) REFERENCES usuario(id) ON DELETE SET NULL
+      ) ENGINE=InnoDB;
+    `);
+
+    // Check and add tecnico_principal_id column to empresa
+    const [colsEmpresa] = await pool.query<any[]>(`SHOW COLUMNS FROM empresa`);
+    const empresaColNames = colsEmpresa.map((c: any) => c.Field);
+    if (!empresaColNames.includes('tecnico_principal_id')) {
+      console.log('Adding tecnico_principal_id column to empresa table...');
+      await pool.query(`ALTER TABLE empresa ADD COLUMN tecnico_principal_id INT NULL`);
+      try {
+        await pool.query(`ALTER TABLE empresa ADD CONSTRAINT fk_empresa_tecnico_principal FOREIGN KEY (tecnico_principal_id) REFERENCES usuario(id) ON DELETE SET NULL`);
+      } catch (err: any) {
+        console.log('Constraint fk_empresa_tecnico_principal already exists or error:', err.message);
+      }
+    }
+
+    // Check and add creador_id column to soporte_recurrente
+    const [colsRecurrencia] = await pool.query<any[]>(`SHOW COLUMNS FROM soporte_recurrente`);
+    const recurrenciaColNames = colsRecurrencia.map((c: any) => c.Field);
+    if (!recurrenciaColNames.includes('creador_id')) {
+      console.log('Adding creador_id column to soporte_recurrente table...');
+      await pool.query(`ALTER TABLE soporte_recurrente ADD COLUMN creador_id INT NULL`);
+      try {
+        await pool.query(`ALTER TABLE soporte_recurrente ADD CONSTRAINT fk_soporte_recurrente_creador FOREIGN KEY (creador_id) REFERENCES usuario(id) ON DELETE SET NULL`);
+      } catch (err: any) {
+        console.log('Constraint fk_soporte_recurrente_creador already exists or error:', err.message);
+      }
+    }
+
+    // Create base_conocimiento table if not exists
+    console.log('Checking/creating base_conocimiento table...');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS base_conocimiento (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        titulo VARCHAR(255) NOT NULL,
+        pasos_solucion TEXT NOT NULL,
+        categoria VARCHAR(100) NOT NULL,
+        ticket_origen_id INT NULL,
+        creador_id INT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        CONSTRAINT fk_bc_ticket FOREIGN KEY (ticket_origen_id) REFERENCES ticket(id) ON DELETE SET NULL,
+        CONSTRAINT fk_bc_creador FOREIGN KEY (creador_id) REFERENCES usuario(id) ON DELETE SET NULL
       ) ENGINE=InnoDB;
     `);
 

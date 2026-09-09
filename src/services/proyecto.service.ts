@@ -157,6 +157,42 @@ export const recalcularAvanceYEstados = async (proyectoId: number, usuarioId: nu
           ).catch(console.error);
         }
 
+        // Si el proyecto proviene de un ticket de soporte (ticket_origen_id), finalizar el ticket automáticamente
+        if (projAnterior.ticket_origen_id) {
+          const [tRows] = await pool.query<RowDataPacket[]>(
+            `SELECT id, bitacora_dinamica, creador_id, titulo FROM ticket WHERE id = ?`,
+            [projAnterior.ticket_origen_id]
+          );
+          if (tRows.length > 0) {
+            const ticketOrigen = tRows[0];
+            let ticketBitacora = [];
+            try {
+              ticketBitacora = typeof ticketOrigen.bitacora_dinamica === 'string'
+                ? JSON.parse(ticketOrigen.bitacora_dinamica)
+                : ticketOrigen.bitacora_dinamica || [];
+            } catch (e) {
+              ticketBitacora = [];
+            }
+
+            ticketBitacora.push({
+              accion: `Ticket finalizado automáticamente al completarse el Proyecto #${proyectoId} ("${projAnterior.nombre}").`,
+              fecha: new Date().toISOString(),
+              usuario: 'Sistema Automático'
+            });
+
+            await pool.query(
+              `UPDATE ticket SET estado = 'Finalizada', bitacora_dinamica = ?, updated_at = NOW() WHERE id = ?`,
+              [JSON.stringify(ticketBitacora), ticketOrigen.id]
+            );
+
+            crearNotificacion(
+              ticketOrigen.creador_id,
+              `Ticket Solucionado por Proyecto #${proyectoId}`,
+              `Tu ticket "${ticketOrigen.titulo}" fue finalizado automáticamente al completarse el proyecto asociado.`
+            ).catch(console.error);
+          }
+        }
+
         // Notify creator and assigned technicians internally
         const userIdsToNotify = [creador?.id, ...techRows.map((t) => t.id)].filter(Boolean) as number[];
         for (const uId of userIdsToNotify) {
@@ -167,6 +203,7 @@ export const recalcularAvanceYEstados = async (proyectoId: number, usuarioId: nu
           ).catch(console.error);
         }
       }
+
     }
   }
 };

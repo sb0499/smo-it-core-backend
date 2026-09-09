@@ -191,9 +191,10 @@ export const generarActaIngreso = (ingreso: any): Promise<Buffer> => {
     };
 
     // Cell Row 1
+    const empText = ingreso.sucursal_nombre ? `${ingreso.empresa_nombre} - ${ingreso.sucursal_nombre}` : (ingreso.empresa_nombre || '');
     doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#000000');
-    doc.text('Empresa:', col1X, boxY + 4, { width: 178, align: 'center' });
-    doc.font('Helvetica').fontSize(9).text(ingreso.empresa_nombre || '', col1X, boxY + 16, { width: 178, align: 'center' });
+    doc.text('Empresa / Sucursal:', col1X, boxY + 4, { width: 178, align: 'center' });
+    doc.font('Helvetica').fontSize(9).text(empText, col1X, boxY + 16, { width: 178, align: 'center' });
 
     doc.font('Helvetica-Bold').fontSize(8.5).text('Proveedor:', col2X, boxY + 4, { width: 178, align: 'center' });
     doc.font('Helvetica').fontSize(9).text(ingreso.proveedor_nombre || 'N/A', col2X, boxY + 16, { width: 178, align: 'center' });
@@ -225,40 +226,77 @@ export const generarActaIngreso = (ingreso: any): Promise<Buffer> => {
 
     // Header row
     doc.rect(30, tableStartY, 535, 22).fillAndStroke('#e5e7eb', '#000000');
-    doc.font('Helvetica-Bold').fontSize(9).fillColor('#000000');
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#000000');
 
-    // Column boundaries
-    const tCol1 = 30;   // TIPO (width 130)
-    const tCol2 = 160;  // MARCA (width 130)
-    const tCol3 = 290;  // MODELO (width 130)
-    const tCol4 = 420;  // SERIE (width 145)
+    // Column boundaries (Total width 535: 45 + 135 + 110 + 110 + 135)
+    const tCol1 = 30;   // CANT. (width 45)
+    const tCol2 = 75;   // TIPO (width 135)
+    const tCol3 = 210;  // MARCA (width 110)
+    const tCol4 = 320;  // MODELO (width 110)
+    const tCol5 = 430;  // SERIE (width 135)
 
-    doc.text('TIPO', tCol1, tableStartY + 6, { width: 130, align: 'center' });
-    doc.text('MARCA', tCol2, tableStartY + 6, { width: 130, align: 'center' });
-    doc.text('MODELO', tCol3, tableStartY + 6, { width: 130, align: 'center' });
-    doc.text('SERIE', tCol4, tableStartY + 6, { width: 145, align: 'center' });
+    doc.text('CANT.', tCol1, tableStartY + 6, { width: 45, align: 'center' });
+    doc.text('TIPO DE EQUIPO', tCol2, tableStartY + 6, { width: 135, align: 'center' });
+    doc.text('MARCA', tCol3, tableStartY + 6, { width: 110, align: 'center' });
+    doc.text('MODELO', tCol4, tableStartY + 6, { width: 110, align: 'center' });
+    doc.text('SERIE', tCol5, tableStartY + 6, { width: 135, align: 'center' });
 
     // Table Column borders for Header
     doc.moveTo(tCol2, tableStartY).lineTo(tCol2, tableStartY + 22).stroke();
     doc.moveTo(tCol3, tableStartY).lineTo(tCol3, tableStartY + 22).stroke();
     doc.moveTo(tCol4, tableStartY).lineTo(tCol4, tableStartY + 22).stroke();
+    doc.moveTo(tCol5, tableStartY).lineTo(tCol5, tableStartY + 22).stroke();
 
     let currentY = tableStartY + 22;
 
-    const activos = ingreso.activos || [];
-    activos.forEach((activo: any) => {
+    const rawActivos = ingreso.activos || [];
+    
+    // Group identical assets by (tipo_equipo_nombre, marca, modelo, serial)
+    const groupedMap = new Map<string, {
+      tipo_equipo_nombre: string;
+      marca: string;
+      modelo: string;
+      serial: string;
+      cantidad: number;
+    }>();
+
+    rawActivos.forEach((activo: any) => {
+      const tipo = (activo.tipo_equipo_nombre || 'N/A').toUpperCase();
+      const marca = (activo.marca || 'N/A').toUpperCase();
+      const modelo = (activo.modelo || 'N/A').toUpperCase();
+      const serial = (activo.serial || 'NA').toUpperCase();
+      const key = `${tipo}|${marca}|${modelo}|${serial}`;
+
+      if (groupedMap.has(key)) {
+        groupedMap.get(key)!.cantidad += 1;
+      } else {
+        groupedMap.set(key, {
+          tipo_equipo_nombre: tipo,
+          marca,
+          modelo,
+          serial,
+          cantidad: 1
+        });
+      }
+    });
+
+    const activosGrouped = Array.from(groupedMap.values());
+
+    activosGrouped.forEach((item: any) => {
       const rowH = 22;
       doc.rect(30, currentY, 535, rowH).strokeColor('#000000').stroke();
 
       doc.moveTo(tCol2, currentY).lineTo(tCol2, currentY + rowH).stroke();
       doc.moveTo(tCol3, currentY).lineTo(tCol3, currentY + rowH).stroke();
       doc.moveTo(tCol4, currentY).lineTo(tCol4, currentY + rowH).stroke();
+      doc.moveTo(tCol5, currentY).lineTo(tCol5, currentY + rowH).stroke();
 
       doc.font('Helvetica').fontSize(9).fillColor('#000000');
-      doc.text((activo.tipo_equipo_nombre || 'N/A').toUpperCase(), tCol1, currentY + 6, { width: 130, align: 'center' });
-      doc.text((activo.marca || 'N/A').toUpperCase(), tCol2, currentY + 6, { width: 130, align: 'center' });
-      doc.text((activo.modelo || 'N/A').toUpperCase(), tCol3, currentY + 6, { width: 130, align: 'center' });
-      doc.text((activo.serial || 'NA').toUpperCase(), tCol4, currentY + 6, { width: 145, align: 'center' });
+      doc.text(item.cantidad.toString(), tCol1, currentY + 6, { width: 45, align: 'center' });
+      doc.text(item.tipo_equipo_nombre, tCol2, currentY + 6, { width: 135, align: 'center' });
+      doc.text(item.marca, tCol3, currentY + 6, { width: 110, align: 'center' });
+      doc.text(item.modelo, tCol4, currentY + 6, { width: 110, align: 'center' });
+      doc.text(item.serial, tCol5, currentY + 6, { width: 135, align: 'center' });
 
       currentY += rowH;
     });

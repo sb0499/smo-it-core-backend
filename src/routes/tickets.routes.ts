@@ -120,6 +120,9 @@ ticketsRouter.put('/:ticket_id', requireAuth, ctrl.updateTicket);
  *         description: Ticket no encontrado o no se pudo escalar
  */
 ticketsRouter.post('/:ticket_id/escalar-n2', requireAuth, ctrl.escalarTicketAN2);
+ticketsRouter.post('/:ticket_id/escalar-proveedor', requireAuth, ctrl.escalarTicketAProveedor);
+ticketsRouter.post('/:ticket_id/escalar-proyecto', requireAuth, ctrl.escalarTicketAProyecto);
+
 
 /**
  * @openapi

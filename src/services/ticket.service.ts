@@ -77,8 +77,36 @@ export const createTicket = async (data: any, currentUser: any) => {
       : (diaSemana >= 1 && diaSemana <= 5);
 
     if (esDiaTrabajo) {
-      // 1. Intentar asignación dinámica por Centro Comercial - CC (pivot usuario_empresa)
-      if (data.empresa_id) {
+      // 1. Prioridad: Técnico de Sucursal específica si existe y está activo
+      if (data.sucursal_id) {
+        const [sucRows] = await pool.query<RowDataPacket[]>(
+          `SELECT s.usuario_id 
+           FROM sucursal s
+           JOIN usuario u ON s.usuario_id = u.id
+           WHERE s.id = ? AND u.is_active = 1`,
+          [data.sucursal_id]
+        );
+        if (sucRows.length > 0 && sucRows[0].usuario_id) {
+          tecnicoAsignado = sucRows[0].usuario_id;
+        }
+      }
+
+      // 2. Prioridad: Técnico N1 Principal de la Empresa/Sede si existe y está activo
+      if (!tecnicoAsignado && data.empresa_id) {
+        const [empRows] = await pool.query<RowDataPacket[]>(
+          `SELECT e.tecnico_principal_id 
+           FROM empresa e
+           JOIN usuario u ON e.tecnico_principal_id = u.id
+           WHERE e.id = ? AND u.is_active = 1`,
+          [data.empresa_id]
+        );
+        if (empRows.length > 0 && empRows[0].tecnico_principal_id) {
+          tecnicoAsignado = empRows[0].tecnico_principal_id;
+        }
+      }
+
+      // 3. Si no hay técnico principal asignado, balancear entre los técnicos N1 de esa sede/empresa
+      if (!tecnicoAsignado && data.empresa_id) {
         // En empresas especiales no se toma en cuenta si son N1 o N2
         const techNivelFilter = isSpecialCompany ? '' : "AND u.nivel_soporte = 'N1'";
         const [techRows] = await pool.query<RowDataPacket[]>(
@@ -557,6 +585,142 @@ export const escalarTicketAN2 = async (
     bitacora_dinamica: bitacora
   };
 };
+
+export const escalarTicketAProveedor = async (ticketId: number, currentUser: any) => {
+  if (currentUser.rol_nombre !== 'ADMIN' && currentUser.rol_nombre !== 'SUPERVISOR' && currentUser.nivel_soporte !== 'N2') {
+    throw new Error('Solo el personal de Nivel 2, Supervisores o Administradores pueden elevar un soporte a Proveedor (N3).');
+  }
+
+  const [existing] = await pool.query<RowDataPacket[]>(`SELECT * FROM ticket WHERE id = ?`, [ticketId]);
+  if (existing.length === 0) return null;
+  const ticket = existing[0];
+
+  let bitacora = [];
+  try {
+    bitacora = typeof ticket.bitacora_dinamica === 'string'
+      ? JSON.parse(ticket.bitacora_dinamica)
+      : ticket.bitacora_dinamica || [];
+  } catch (e) {
+    bitacora = [];
+  }
+
+  const ahora = new Date();
+  bitacora.push({
+    accion: `Ticket escalado a Proveedor (N3) por ${currentUser.nombre_completo} - SLA Pausado`,
+    fecha: ahora.toISOString(),
+    usuario: currentUser.nombre_completo
+  });
+
+  await pool.query(
+    `UPDATE ticket 
+     SET nivel_soporte = 'N3', 
+         estado = 'Escalado a Proveedor', 
+         sla_paused_at = NOW(), 
+         bitacora_dinamica = ?, 
+         updated_at = NOW() 
+     WHERE id = ?`,
+    [JSON.stringify(bitacora), ticketId]
+  );
+
+  const [updatedRows] = await pool.query<RowDataPacket[]>(
+    `SELECT t.*, u.nombre_completo as tecnico_nombre, e.nombre as empresa_nombre, s.nombre as sucursal_nombre 
+     FROM ticket t 
+     LEFT JOIN usuario u ON t.tecnico_id = u.id 
+     LEFT JOIN empresa e ON t.empresa_id = e.id 
+     LEFT JOIN sucursal s ON t.sucursal_id = s.id
+     WHERE t.id = ?`,
+    [ticketId]
+  );
+  return {
+    ...updatedRows[0],
+    bitacora_dinamica: bitacora
+  };
+};
+
+export const escalarTicketAProyecto = async (ticketId: number, currentUser: any) => {
+  if (currentUser.rol_nombre !== 'ADMIN' && currentUser.rol_nombre !== 'SUPERVISOR' && currentUser.nivel_soporte !== 'N2') {
+    throw new Error('Solo el personal de Nivel 2, Supervisores o Administradores pueden elevar un soporte a Proyecto.');
+  }
+
+  const [existing] = await pool.query<RowDataPacket[]>(
+    `SELECT t.*, e.nombre as empresa_nombre 
+     FROM ticket t 
+     LEFT JOIN empresa e ON t.empresa_id = e.id 
+     WHERE t.id = ?`, 
+    [ticketId]
+  );
+  if (existing.length === 0) return null;
+  const ticket = existing[0];
+
+  // 1. Crear el proyecto en la base de datos
+  const nombreProyecto = `Proyecto: ${ticket.titulo}`;
+  const descProyecto = `${ticket.descripcion}\n\n--- Información de Origen ---\nTicket ID: #${ticket.id}\nSolicitante: ${ticket.persona_solicitante || 'N/A'}\nÁrea: ${ticket.area_solicitante || 'General'}\nSede/Empresa: ${ticket.empresa_nombre || 'N/A'}`;
+  
+  const fechaFinEstimada = new Date();
+  fechaFinEstimada.setDate(fechaFinEstimada.getDate() + 14); // 14 días por defecto
+  const fechaFinStr = fechaFinEstimada.toISOString().slice(0, 19).replace('T', ' ');
+
+  const miembrosJson = JSON.stringify([currentUser.id]);
+
+  const [projResult] = await pool.query<ResultSetHeader>(
+    `INSERT INTO proyecto (nombre, descripcion, fecha_fin_estimada, estado, tipo_proyecto, creador_id, ticket_origen_id, miembros)
+     VALUES (?, ?, ?, 'Sin Iniciar', 'Soporte IT', ?, ?, ?)`,
+    [nombreProyecto, descProyecto, fechaFinStr, currentUser.id, ticketId, miembrosJson]
+  );
+
+  const proyectoId = projResult.insertId;
+
+  // 2. Log de historial en proyecto_historial
+  await pool.query(
+    `INSERT INTO proyecto_historial (proyecto_id, usuario_id, descripcion_cambio) VALUES (?, ?, ?)`,
+    [proyectoId, currentUser.id, `El usuario N2 ${currentUser.nombre_completo} elevó el ticket #${ticketId} a Proyecto con éxito.`]
+  );
+
+  // 3. Actualizar Ticket
+  let bitacora = [];
+  try {
+    bitacora = typeof ticket.bitacora_dinamica === 'string'
+      ? JSON.parse(ticket.bitacora_dinamica)
+      : ticket.bitacora_dinamica || [];
+  } catch (e) {
+    bitacora = [];
+  }
+
+  bitacora.push({
+    accion: `Ticket elevado a Proyecto #${proyectoId} ("${nombreProyecto}") por ${currentUser.nombre_completo}. Asignado a ${currentUser.nombre_completo}.`,
+    fecha: new Date().toISOString(),
+    usuario: currentUser.nombre_completo
+  });
+
+  await pool.query(
+    `UPDATE ticket 
+     SET estado = 'Escalado a Proyecto', 
+         bitacora_dinamica = ?, 
+         updated_at = NOW() 
+     WHERE id = ?`,
+    [JSON.stringify(bitacora), ticketId]
+  );
+
+  const [updatedRows] = await pool.query<RowDataPacket[]>(
+    `SELECT t.*, u.nombre_completo as tecnico_nombre, e.nombre as empresa_nombre, s.nombre as sucursal_nombre 
+     FROM ticket t 
+     LEFT JOIN usuario u ON t.tecnico_id = u.id 
+     LEFT JOIN empresa e ON t.empresa_id = e.id 
+     LEFT JOIN sucursal s ON t.sucursal_id = s.id
+     WHERE t.id = ?`,
+    [ticketId]
+  );
+
+  return {
+    ticket: {
+      ...updatedRows[0],
+      bitacora_dinamica: bitacora
+    },
+    proyecto_id: proyectoId,
+    proyecto_nombre: nombreProyecto
+  };
+};
+
 
 export const enviarRecordatoriosCierreDiario = async () => {
   const [tickets] = await pool.query<RowDataPacket[]>(

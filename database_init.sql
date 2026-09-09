@@ -393,21 +393,7 @@ ON DUPLICATE KEY UPDATE nombre=nombre;
 -- Técnicos: tech123 (santi@smo.com, fide@smo.com, gabo@smo.com, carlos@smo.com, etc.)
 -- Sede/Usuario: user123 (user@smo.com)
 INSERT INTO usuario (id, email, hashed_password, nombre_completo, is_active, rol_id, must_change_password, nivel_soporte, grupo_n2) VALUES
-(1, 'admin@smo.com', '$2a$10$90/Ku5J22/UExoZxU2oATOw/zIB0rhlsywIItUa5myqzgjaT11eki', 'Administrador Sistema', 1, 1, 0, 'N1', NULL),
-(2, 'santi@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Santi Condado', 1, 2, 1, 'N1', NULL),
-(3, 'fide@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Fide Scala', 1, 2, 1, 'N1', NULL),
-(4, 'gabo@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Gabo CCI', 1, 2, 1, 'N1', NULL),
-(5, 'carlos@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Carlos Portoshopping', 1, 2, 1, 'N1', NULL),
-(6, 'ana@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Ana Gametown', 1, 2, 1, 'N1', NULL),
-(7, 'pedro@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Pedro Aparca', 1, 2, 1, 'N1', NULL),
-(8, 'laura@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Laura Datatrust', 1, 2, 1, 'N2', 'Infraestructura'),
-(9, 'diego@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Diego Teatro', 1, 2, 1, 'N2', 'Desarrollo'),
-(10, 'juan@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Juan Pomasqui', 1, 2, 1, 'N1', NULL),
-(11, 'maria@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Maria Portocarrero', 1, 2, 1, 'N1', NULL),
-(12, 'andres@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Andres Lopez', 1, 2, 1, 'N1', NULL),
-(13, 'sofia@smo.com', '$2a$10$LjnA3fyNA2J4p8XhYI.04uEAZxuKSHOrVy1.VLr5wqnqBPCBWqcdK', 'Sofia Martinez', 1, 2, 1, 'N1', NULL),
-(14, 'user@smo.com', '$2a$10$7q6Q8c9a3d4Umr7ru778wOrVoC/AQ6dz/iCtMsGep2ZQH9n0VBmie', 'Cliente Condado', 1, 3, 0, 'N1', NULL)
-ON DUPLICATE KEY UPDATE hashed_password=values(hashed_password);
+(1, 'admin@smo.com', '$2a$10$90/Ku5J22/UExoZxU2oATOw/zIB0rhlsywIItUa5myqzgjaT11eki', 'Administrador Sistema', 1, 1, 0, 'N1', NULL)
 
 -- Asignar empresas/sedes a los usuarios
 INSERT INTO usuario_empresa (usuario_id, empresa_id) VALUES

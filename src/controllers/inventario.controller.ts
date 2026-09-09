@@ -8,12 +8,52 @@ import { getEmpresaAbbr } from '../services/credencial.service';
 import fs from 'fs';
 import { RowDataPacket } from 'mysql2';
 
-const getAssignedEmpresas = async (usuarioId: number): Promise<number[]> => {
-  const [rows] = await pool.query<any[]>(
+const getAssignedSucursales = async (usuarioId: number): Promise<{ empresaIds: number[]; sucursalIds: number[] }> => {
+  // 1. Check assigned sucursales in usuario_sucursal_inventario
+  const [sucRows] = await pool.query<any[]>(
+    'SELECT sucursal_id FROM usuario_sucursal_inventario WHERE usuario_id = ?',
+    [usuarioId]
+  );
+  const assignedSucursalIds: number[] = sucRows.map(r => r.sucursal_id);
+
+  // 2. Check assigned empresas in usuario_empresa_inventario
+  const [empRows] = await pool.query<any[]>(
     'SELECT empresa_id FROM usuario_empresa_inventario WHERE usuario_id = ?',
     [usuarioId]
   );
-  return rows.map(r => r.empresa_id);
+  const assignedEmpresaIds: number[] = empRows.map(r => r.empresa_id);
+
+  if (assignedEmpresaIds.length === 0 && assignedSucursalIds.length === 0) {
+    return { empresaIds: [], sucursalIds: [] };
+  }
+
+  let finalSucursalIds = [...assignedSucursalIds];
+
+  // 3. For any empresa in usuario_empresa_inventario that doesn't have an explicit sucursal in usuario_sucursal_inventario, include ALL sucursales of that empresa
+  if (assignedEmpresaIds.length > 0) {
+    const [empSucRows] = await pool.query<any[]>(
+      `SELECT id, empresa_id FROM sucursal WHERE empresa_id IN (${assignedEmpresaIds.map(() => '?').join(',')})`,
+      assignedEmpresaIds
+    );
+
+    const sucursalesByEmpresa = new Map<number, number[]>();
+    empSucRows.forEach(r => {
+      if (!sucursalesByEmpresa.has(r.empresa_id)) sucursalesByEmpresa.set(r.empresa_id, []);
+      sucursalesByEmpresa.get(r.empresa_id)!.push(r.id);
+    });
+
+    assignedEmpresaIds.forEach(empId => {
+      const sucs = sucursalesByEmpresa.get(empId) || [];
+      const hasExplicit = sucs.some(sId => assignedSucursalIds.includes(sId));
+      if (!hasExplicit) {
+        // Technician gets all sucursales of this empresa
+        finalSucursalIds.push(...sucs);
+      }
+    });
+  }
+
+  const uniqueSucursalIds = Array.from(new Set(finalSucursalIds));
+  return { empresaIds: assignedEmpresaIds, sucursalIds: uniqueSucursalIds };
 };
 
 export const getActivos = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -24,10 +64,15 @@ export const getActivos = async (req: AuthRequest, res: Response): Promise<void>
     const estado = (req.query.estado as string) || '';
     const custodioId = req.query.custodio_id ? parseInt(req.query.custodio_id as string) : undefined;
     const empresaIdFilter = req.query.empresa_id ? parseInt(req.query.empresa_id as string) : undefined;
+    const sucursalIdFilter = req.query.sucursal_id ? parseInt(req.query.sucursal_id as string) : undefined;
 
     let empresaIds: number[] | undefined = undefined;
-    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO' && !custodioId && !empresaIdFilter) {
-      empresaIds = await getAssignedEmpresas(req.currentUser.id);
+    let sucursalIds: number[] | undefined = undefined;
+
+    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO' && !custodioId && !empresaIdFilter && !sucursalIdFilter) {
+      const assigned = await getAssignedSucursales(req.currentUser.id);
+      empresaIds = assigned.empresaIds;
+      sucursalIds = assigned.sucursalIds;
     }
 
     const activosResult = await inventarioService.getActivos(
@@ -37,7 +82,9 @@ export const getActivos = async (req: AuthRequest, res: Response): Promise<void>
       estado,
       empresaIds,
       custodioId,
-      empresaIdFilter
+      empresaIdFilter,
+      sucursalIds,
+      sucursalIdFilter
     );
     res.json(activosResult);
   } catch (error: any) {
@@ -192,7 +239,8 @@ export const getMovimientosGlobal = async (req: AuthRequest, res: Response): Pro
 
     let empresaIds: number[] | undefined = undefined;
     if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
-      empresaIds = await getAssignedEmpresas(req.currentUser.id);
+      const assigned = await getAssignedSucursales(req.currentUser.id);
+      empresaIds = assigned.empresaIds;
     }
 
     const movimientos = await inventarioService.getMovimientosGlobal(skip, limit, empresaIds);
@@ -219,7 +267,8 @@ export const importarInventario = async (req: AuthRequest, res: Response): Promi
 
     let empresaIds: number[] = [];
     if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
-      empresaIds = await getAssignedEmpresas(req.currentUser.id);
+      const assigned = await getAssignedSucursales(req.currentUser.id);
+      empresaIds = assigned.empresaIds;
     }
 
     const result = await excelService.importarExcel(
@@ -260,7 +309,8 @@ export const exportarInventario = async (req: AuthRequest, res: Response): Promi
   try {
     let empresaIds: number[] = [];
     if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
-      empresaIds = await getAssignedEmpresas(req.currentUser.id);
+      const assigned = await getAssignedSucursales(req.currentUser.id);
+      empresaIds = assigned.empresaIds;
     }
 
     const workbook = await excelService.exportarExcel(req.currentUser, empresaIds);
@@ -304,19 +354,20 @@ export const updateActivo = async (req: AuthRequest, res: Response): Promise<voi
     }
 
     if (req.currentUser.rol_nombre === 'TECNICO') {
-      const assigned = await getAssignedEmpresas(req.currentUser.id);
-      const [existing] = await pool.query<any[]>('SELECT empresa_id FROM activo WHERE id = ?', [activoId]);
+      const assigned = await getAssignedSucursales(req.currentUser.id);
+      const [existing] = await pool.query<any[]>('SELECT empresa_id, sucursal_id FROM activo WHERE id = ?', [activoId]);
       if (existing.length === 0) {
         res.status(404).json({ detail: 'Activo no encontrado' });
         return;
       }
       const oldEmpresaId = existing[0].empresa_id;
-      if (oldEmpresaId && !assigned.includes(oldEmpresaId)) {
-        res.status(403).json({ detail: 'No tienes autorización para editar activos en esta sede.' });
+      const oldSucursalId = existing[0].sucursal_id;
+      if (oldSucursalId && assigned.sucursalIds.length > 0 && !assigned.sucursalIds.includes(oldSucursalId)) {
+        res.status(403).json({ detail: 'No tienes autorización para editar activos en esta sucursal.' });
         return;
       }
-      if (req.body.empresa_id && !assigned.includes(Number(req.body.empresa_id))) {
-        res.status(403).json({ detail: 'No puedes mover el activo a una sede no autorizada.' });
+      if (req.body.sucursal_id && assigned.sucursalIds.length > 0 && !assigned.sucursalIds.includes(Number(req.body.sucursal_id))) {
+        res.status(403).json({ detail: 'No puedes mover el activo a una sucursal no autorizada.' });
         return;
       }
     }
@@ -341,8 +392,12 @@ export const createIngresoBodega = async (req: AuthRequest, res: Response): Prom
     }
 
     if (req.currentUser.rol_nombre === 'TECNICO') {
-      const assigned = await getAssignedEmpresas(req.currentUser.id);
-      if (!assigned.includes(Number(req.body.empresa_id))) {
+      const assigned = await getAssignedSucursales(req.currentUser.id);
+      if (req.body.sucursal_id && assigned.sucursalIds.length > 0 && !assigned.sucursalIds.includes(Number(req.body.sucursal_id))) {
+        res.status(403).json({ detail: 'No tienes autorización para registrar ingresos en esta sucursal.' });
+        return;
+      }
+      if (req.body.empresa_id && assigned.empresaIds.length > 0 && !assigned.empresaIds.includes(Number(req.body.empresa_id))) {
         res.status(403).json({ detail: 'No tienes autorización para registrar ingresos en esta sede.' });
         return;
       }
@@ -367,7 +422,8 @@ export const getIngresosBodega = async (req: AuthRequest, res: Response): Promis
     let empresaIds: number[] | undefined = undefined;
     let realizadoPorId: number | undefined = undefined;
     if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
-      empresaIds = await getAssignedEmpresas(req.currentUser.id);
+      const assigned = await getAssignedSucursales(req.currentUser.id);
+      empresaIds = assigned.empresaIds;
       realizadoPorId = req.currentUser.id;
     }
 
@@ -438,8 +494,12 @@ export const createEgresoBodega = async (req: AuthRequest, res: Response): Promi
     }
 
     if (req.currentUser.rol_nombre === 'TECNICO') {
-      const assigned = await getAssignedEmpresas(req.currentUser.id);
-      if (!assigned.includes(Number(req.body.empresa_id))) {
+      const assigned = await getAssignedSucursales(req.currentUser.id);
+      if (req.body.sucursal_id && assigned.sucursalIds.length > 0 && !assigned.sucursalIds.includes(Number(req.body.sucursal_id))) {
+        res.status(403).json({ detail: 'No tienes autorización para registrar egresos en esta sucursal.' });
+        return;
+      }
+      if (req.body.empresa_id && assigned.empresaIds.length > 0 && !assigned.empresaIds.includes(Number(req.body.empresa_id))) {
         res.status(403).json({ detail: 'No tienes autorización para registrar egresos en esta sede.' });
         return;
       }
@@ -464,7 +524,8 @@ export const getEgresosBodega = async (req: AuthRequest, res: Response): Promise
     let empresaIds: number[] | undefined = undefined;
     let realizadoPorId: number | undefined = undefined;
     if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
-      empresaIds = await getAssignedEmpresas(req.currentUser.id);
+      const assigned = await getAssignedSucursales(req.currentUser.id);
+      empresaIds = assigned.empresaIds;
       realizadoPorId = req.currentUser.id;
     }
 
@@ -559,6 +620,18 @@ export const createRecepcionBodega = async (req: AuthRequest, res: Response): Pr
     if (!req.currentUser) {
       res.status(401).json({ detail: 'Usuario no autenticado' });
       return;
+    }
+
+    if (req.currentUser.rol_nombre === 'TECNICO') {
+      const assigned = await getAssignedSucursales(req.currentUser.id);
+      if (req.body.sucursal_id && assigned.sucursalIds.length > 0 && !assigned.sucursalIds.includes(Number(req.body.sucursal_id))) {
+        res.status(403).json({ detail: 'No tienes autorización para registrar recepciones en esta sucursal.' });
+        return;
+      }
+      if (req.body.empresa_id && assigned.empresaIds.length > 0 && !assigned.empresaIds.includes(Number(req.body.empresa_id))) {
+        res.status(403).json({ detail: 'No tienes autorización para registrar recepciones en esta sede.' });
+        return;
+      }
     }
 
     const recepcion = await inventarioService.createRecepcionBodega(req.body, req.currentUser.id);

@@ -20,15 +20,19 @@ const sucursalSelectQuery = `
  */
 empresasRouter.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    let query = 'SELECT * FROM empresa';
+    let query = `
+      SELECT e.*, u_tp.nombre_completo as tecnico_principal_nombre 
+      FROM empresa e 
+      LEFT JOIN usuario u_tp ON e.tecnico_principal_id = u_tp.id
+    `;
     const params: any[] = [];
 
     if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO' && req.currentUser.nivel_soporte === 'N1') {
-      query += ` WHERE id IN (SELECT empresa_id FROM usuario_empresa WHERE usuario_id = ?)`;
+      query += ` WHERE e.id IN (SELECT empresa_id FROM usuario_empresa WHERE usuario_id = ?)`;
       params.push(req.currentUser.id);
     }
 
-    query += ' ORDER BY nombre ASC';
+    query += ' ORDER BY e.nombre ASC';
     const [empresas] = await pool.query<RowDataPacket[]>(query, params);
 
     if (empresas.length === 0) {
@@ -63,7 +67,13 @@ empresasRouter.get('/', requireAuth, async (req: AuthRequest, res: Response) => 
 empresasRouter.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const id = parseInt(req.params.id);
-    const [empresas] = await pool.query<RowDataPacket[]>('SELECT * FROM empresa WHERE id = ?', [id]);
+    const [empresas] = await pool.query<RowDataPacket[]>(
+      `SELECT e.*, u_tp.nombre_completo as tecnico_principal_nombre 
+       FROM empresa e 
+       LEFT JOIN usuario u_tp ON e.tecnico_principal_id = u_tp.id 
+       WHERE e.id = ?`,
+      [id]
+    );
     if (empresas.length === 0) {
       res.status(404).json({ detail: 'Empresa no encontrada' });
       return;
@@ -107,7 +117,7 @@ empresasRouter.get('/:id/sucursales', requireAuth, async (req: AuthRequest, res:
  */
 empresasRouter.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const { nombre, sucursales } = req.body;
+    const { nombre, tecnico_principal_id, sucursales } = req.body;
     if (!nombre || !nombre.trim()) {
       res.status(400).json({ detail: 'El nombre de la empresa es obligatorio' });
       return;
@@ -119,7 +129,10 @@ empresasRouter.post('/', requireAuth, async (req: AuthRequest, res: Response) =>
       return;
     }
 
-    const [result] = await pool.query<ResultSetHeader>('INSERT INTO empresa (nombre) VALUES (?)', [nombre.trim()]);
+    const [result] = await pool.query<ResultSetHeader>(
+      'INSERT INTO empresa (nombre, tecnico_principal_id) VALUES (?, ?)',
+      [nombre.trim(), tecnico_principal_id ? Number(tecnico_principal_id) : null]
+    );
     const empresaId = result.insertId;
 
     if (Array.isArray(sucursales) && sucursales.length > 0) {
@@ -143,9 +156,16 @@ empresasRouter.post('/', requireAuth, async (req: AuthRequest, res: Response) =>
       [empresaId]
     );
 
+    const [createdEmpresa] = await pool.query<RowDataPacket[]>(
+      `SELECT e.*, u_tp.nombre_completo as tecnico_principal_nombre 
+       FROM empresa e 
+       LEFT JOIN usuario u_tp ON e.tecnico_principal_id = u_tp.id 
+       WHERE e.id = ?`,
+      [empresaId]
+    );
+
     res.status(201).json({
-      id: empresaId,
-      nombre: nombre.trim(),
+      ...createdEmpresa[0],
       sucursales: createdSucursales
     });
   } catch (error: any) {
@@ -160,7 +180,7 @@ empresasRouter.post('/', requireAuth, async (req: AuthRequest, res: Response) =>
 empresasRouter.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const id = parseInt(req.params.id);
-    const { nombre, sucursales } = req.body;
+    const { nombre, tecnico_principal_id, sucursales } = req.body;
 
     const [existing] = await pool.query<RowDataPacket[]>('SELECT * FROM empresa WHERE id = ?', [id]);
     if (existing.length === 0) {
@@ -174,8 +194,16 @@ empresasRouter.put('/:id', requireAuth, async (req: AuthRequest, res: Response) 
         res.status(400).json({ detail: 'Ya existe otra empresa registrada con ese nombre' });
         return;
       }
-      await pool.query('UPDATE empresa SET nombre = ? WHERE id = ?', [nombre.trim(), id]);
     }
+
+    await pool.query(
+      'UPDATE empresa SET nombre = ?, tecnico_principal_id = ? WHERE id = ?',
+      [
+        nombre ? nombre.trim() : existing[0].nombre,
+        tecnico_principal_id !== undefined ? (tecnico_principal_id ? Number(tecnico_principal_id) : null) : existing[0].tecnico_principal_id,
+        id
+      ]
+    );
 
     if (Array.isArray(sucursales)) {
       const [currentSucursales] = await pool.query<RowDataPacket[]>('SELECT id FROM sucursal WHERE empresa_id = ?', [id]);
@@ -216,7 +244,13 @@ empresasRouter.put('/:id', requireAuth, async (req: AuthRequest, res: Response) 
       [id]
     );
 
-    const [updatedEmpresa] = await pool.query<RowDataPacket[]>('SELECT * FROM empresa WHERE id = ?', [id]);
+    const [updatedEmpresa] = await pool.query<RowDataPacket[]>(
+      `SELECT e.*, u_tp.nombre_completo as tecnico_principal_nombre 
+       FROM empresa e 
+       LEFT JOIN usuario u_tp ON e.tecnico_principal_id = u_tp.id 
+       WHERE e.id = ?`,
+      [id]
+    );
 
     res.json({
       ...updatedEmpresa[0],

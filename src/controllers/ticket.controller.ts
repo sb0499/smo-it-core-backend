@@ -45,6 +45,35 @@ export const escalarTicketAN2 = async (req: AuthRequest, res: Response): Promise
   }
 };
 
+export const escalarTicketAProveedor = async (req: AuthRequest, res: Response): Promise<void> => {
+  const ticketId = parseInt(req.params.ticket_id);
+  try {
+    const ticket = await ticketService.escalarTicketAProveedor(ticketId, req.currentUser);
+    if (!ticket) {
+      res.status(404).json({ detail: 'Ticket no encontrado' });
+      return;
+    }
+    res.json(ticket);
+  } catch (err: any) {
+    res.status(400).json({ detail: err.message || 'Error al elevar el ticket a Proveedor' });
+  }
+};
+
+export const escalarTicketAProyecto = async (req: AuthRequest, res: Response): Promise<void> => {
+  const ticketId = parseInt(req.params.ticket_id);
+  try {
+    const result = await ticketService.escalarTicketAProyecto(ticketId, req.currentUser);
+    if (!result) {
+      res.status(404).json({ detail: 'Ticket no encontrado' });
+      return;
+    }
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ detail: err.message || 'Error al elevar el ticket a Proyecto' });
+  }
+};
+
+
 export const descargarReporteSemanal = async (req: AuthRequest, res: Response): Promise<void> => {
   if (!req.user) {
     res.status(401).json({ detail: 'No autorizado' });

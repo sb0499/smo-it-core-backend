@@ -8,6 +8,7 @@ export interface SoporteRecurrente {
   descripcion: string;
   categoria: string;
   empresa_id: number | null;
+  empresa_nombre?: string;
   area_solicitante: string | null;
   persona_solicitante: string | null;
   prioridad: 'Baja' | 'Media' | 'Alta' | 'Critica';
@@ -16,8 +17,16 @@ export interface SoporteRecurrente {
   siguiente_ejecucion: string;
   ultima_ejecucion: string | null;
   is_active: boolean;
+  creador_id?: number | null;
+  creador_nombre?: string | null;
   created_at?: string;
 }
+
+const isManagerOrAdmin = (user: any) => {
+  if (!user) return false;
+  const role = (user.rol_nombre || user.rol || '').toUpperCase();
+  return role === 'ADMIN' || role === 'SUPERVISOR';
+};
 
 export const getSoportesRecurrentes = async (currentUser: any, page = 1, limit = 10, search = '') => {
   const skip = (page - 1) * limit;
@@ -30,8 +39,9 @@ export const getSoportesRecurrentes = async (currentUser: any, page = 1, limit =
     params.push(wildcard, wildcard, wildcard);
   }
 
-  if (currentUser && currentUser.rol_nombre === 'TECNICO' && currentUser.nivel_soporte === 'N1') {
-    whereClauses.push(`sr.empresa_id IN (SELECT empresa_id FROM usuario_empresa WHERE usuario_id = ?)`);
+  // ADMIN and SUPERVISOR can see all recurring support tasks. Other users only see their own created rules.
+  if (currentUser && !isManagerOrAdmin(currentUser)) {
+    whereClauses.push(`sr.creador_id = ?`);
     params.push(currentUser.id);
   }
 
@@ -44,9 +54,10 @@ export const getSoportesRecurrentes = async (currentUser: any, page = 1, limit =
 
   // Get paginated data
   const selectQuery = `
-    SELECT sr.*, e.nombre as empresa_nombre 
+    SELECT sr.*, e.nombre as empresa_nombre, u.nombre_completo as creador_nombre 
     FROM soporte_recurrente sr 
     LEFT JOIN empresa e ON sr.empresa_id = e.id 
+    LEFT JOIN usuario u ON sr.creador_id = u.id 
     ${whereStr}
     ORDER BY sr.id DESC
     LIMIT ? OFFSET ?
@@ -64,16 +75,17 @@ export const getSoportesRecurrentes = async (currentUser: any, page = 1, limit =
 
 export const getSoporteRecurrenteById = async (id: number) => {
   const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT sr.*, e.nombre as empresa_nombre 
+    `SELECT sr.*, e.nombre as empresa_nombre, u.nombre_completo as creador_nombre 
      FROM soporte_recurrente sr 
      LEFT JOIN empresa e ON sr.empresa_id = e.id 
+     LEFT JOIN usuario u ON sr.creador_id = u.id 
      WHERE sr.id = ?`,
     [id]
   );
   return rows[0] || null;
 };
 
-export const createSoporteRecurrente = async (data: Omit<SoporteRecurrente, 'id'>) => {
+export const createSoporteRecurrente = async (data: Omit<SoporteRecurrente, 'id'>, currentUser?: any) => {
   // Inicialmente siguiente_ejecucion es igual a fecha_inicio, o si fecha_inicio es en el pasado,
   // se calcula la siguiente ocurrencia futura desde hoy.
   const fechaInicio = new Date(data.fecha_inicio);
@@ -89,26 +101,33 @@ export const createSoporteRecurrente = async (data: Omit<SoporteRecurrente, 'id'
 
   const fmtInicio = data.fecha_inicio.split('T')[0];
   const fmtSiguiente = siguienteEjecucion.toISOString().split('T')[0];
+  const creadorId = currentUser?.id || (data as any).creador_id || null;
 
   const [result] = await pool.query<ResultSetHeader>(
     `INSERT INTO soporte_recurrente 
       (titulo, descripcion, categoria, empresa_id, area_solicitante, persona_solicitante, 
-       prioridad, frecuencia, fecha_inicio, siguiente_ejecucion, is_active)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       prioridad, frecuencia, fecha_inicio, siguiente_ejecucion, is_active, creador_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.titulo, data.descripcion, data.categoria, data.empresa_id || null,
       data.area_solicitante || null, data.persona_solicitante || null,
       data.prioridad || 'Media', data.frecuencia, fmtInicio, fmtSiguiente,
-      data.is_active !== undefined ? data.is_active : true
+      data.is_active !== undefined ? data.is_active : true,
+      creadorId
     ]
   );
 
   return getSoporteRecurrenteById(result.insertId);
 };
 
-export const updateSoporteRecurrente = async (id: number, data: Partial<SoporteRecurrente>) => {
+export const updateSoporteRecurrente = async (id: number, data: Partial<SoporteRecurrente>, currentUser?: any) => {
   const existing = await getSoporteRecurrenteById(id);
   if (!existing) return null;
+
+  // Permission check: Only ADMIN, SUPERVISOR, or the creator can update
+  if (currentUser && !isManagerOrAdmin(currentUser) && existing.creador_id !== currentUser.id) {
+    return null;
+  }
 
   const sets: string[] = [];
   const vals: any[] = [];
@@ -152,9 +171,15 @@ export const updateSoporteRecurrente = async (id: number, data: Partial<SoporteR
   return getSoporteRecurrenteById(id);
 };
 
-export const deleteSoporteRecurrente = async (id: number) => {
+export const deleteSoporteRecurrente = async (id: number, currentUser?: any) => {
   const existing = await getSoporteRecurrenteById(id);
   if (!existing) return null;
+
+  // Permission check: Only ADMIN, SUPERVISOR, or the creator can delete
+  if (currentUser && !isManagerOrAdmin(currentUser) && existing.creador_id !== currentUser.id) {
+    return null;
+  }
+
   await pool.query(`DELETE FROM soporte_recurrente WHERE id = ?`, [id]);
   return existing;
 };
