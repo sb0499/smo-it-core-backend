@@ -47,10 +47,14 @@ export const login = async (req: Request, res: Response): Promise<void> => {
   let hasInventoryAccess = false;
   if (user.rol_nombre === 'ADMIN' || user.rol_nombre === 'SUPERVISOR') {
     hasInventoryAccess = true;
-  } else if (user.rol_nombre === 'TECNICO') {
+  } else {
     const [invRows] = await pool.query<any[]>(
-      'SELECT COUNT(*) as count FROM usuario_empresa_inventario WHERE usuario_id = ?',
-      [user.id]
+      `SELECT COUNT(*) as count FROM (
+        SELECT usuario_id FROM usuario_empresa_inventario WHERE usuario_id = ?
+        UNION
+        SELECT usuario_id FROM usuario_sucursal_inventario WHERE usuario_id = ?
+      ) as t`,
+      [user.id, user.id]
     );
     hasInventoryAccess = invRows[0]?.count > 0;
   }

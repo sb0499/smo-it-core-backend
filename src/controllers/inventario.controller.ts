@@ -8,52 +8,40 @@ import { getEmpresaAbbr } from '../services/credencial.service';
 import fs from 'fs';
 import { RowDataPacket } from 'mysql2';
 
-const getAssignedSucursales = async (usuarioId: number): Promise<{ empresaIds: number[]; sucursalIds: number[] }> => {
-  // 1. Check assigned sucursales in usuario_sucursal_inventario
+const getAssignedSucursales = async (usuarioId: number): Promise<{ empresaIds: number[]; sucursalIds: number[]; pureEmpresaIds: number[] }> => {
+  // 1. Check assigned sucursales
   const [sucRows] = await pool.query<any[]>(
-    'SELECT sucursal_id FROM usuario_sucursal_inventario WHERE usuario_id = ?',
-    [usuarioId]
+    `SELECT sucursal_id FROM usuario_sucursal_inventario WHERE usuario_id = ?
+     UNION
+     SELECT sucursal_id FROM usuario_sucursal WHERE usuario_id = ?`,
+    [usuarioId, usuarioId]
   );
   const assignedSucursalIds: number[] = sucRows.map(r => r.sucursal_id);
 
-  // 2. Check assigned empresas in usuario_empresa_inventario
+  // 2. Check assigned empresas
   const [empRows] = await pool.query<any[]>(
-    'SELECT empresa_id FROM usuario_empresa_inventario WHERE usuario_id = ?',
-    [usuarioId]
+    `SELECT empresa_id FROM usuario_empresa_inventario WHERE usuario_id = ?
+     UNION
+     SELECT empresa_id FROM usuario_empresa WHERE usuario_id = ?`,
+    [usuarioId, usuarioId]
   );
-  const assignedEmpresaIds: number[] = empRows.map(r => r.empresa_id);
+  const pureEmpresaIds: number[] = empRows.map(r => r.empresa_id);
+  const assignedEmpresaIds: number[] = [...pureEmpresaIds];
 
-  if (assignedEmpresaIds.length === 0 && assignedSucursalIds.length === 0) {
-    return { empresaIds: [], sucursalIds: [] };
-  }
-
-  let finalSucursalIds = [...assignedSucursalIds];
-
-  // 3. For any empresa in usuario_empresa_inventario that doesn't have an explicit sucursal in usuario_sucursal_inventario, include ALL sucursales of that empresa
-  if (assignedEmpresaIds.length > 0) {
-    const [empSucRows] = await pool.query<any[]>(
-      `SELECT id, empresa_id FROM sucursal WHERE empresa_id IN (${assignedEmpresaIds.map(() => '?').join(',')})`,
-      assignedEmpresaIds
+  // If assigned to specific sucursales, ensure parent empresa_ids are included
+  if (assignedSucursalIds.length > 0) {
+    const [parentEmpRows] = await pool.query<any[]>(
+      `SELECT DISTINCT empresa_id FROM sucursal WHERE id IN (${assignedSucursalIds.map(() => '?').join(',')})`,
+      assignedSucursalIds
     );
-
-    const sucursalesByEmpresa = new Map<number, number[]>();
-    empSucRows.forEach(r => {
-      if (!sucursalesByEmpresa.has(r.empresa_id)) sucursalesByEmpresa.set(r.empresa_id, []);
-      sucursalesByEmpresa.get(r.empresa_id)!.push(r.id);
-    });
-
-    assignedEmpresaIds.forEach(empId => {
-      const sucs = sucursalesByEmpresa.get(empId) || [];
-      const hasExplicit = sucs.some(sId => assignedSucursalIds.includes(sId));
-      if (!hasExplicit) {
-        // Technician gets all sucursales of this empresa
-        finalSucursalIds.push(...sucs);
+    parentEmpRows.forEach(r => {
+      if (!assignedEmpresaIds.includes(r.empresa_id)) {
+        assignedEmpresaIds.push(r.empresa_id);
       }
     });
   }
 
-  const uniqueSucursalIds = Array.from(new Set(finalSucursalIds));
-  return { empresaIds: assignedEmpresaIds, sucursalIds: uniqueSucursalIds };
+  return { empresaIds: assignedEmpresaIds, sucursalIds: assignedSucursalIds, pureEmpresaIds };
 };
 
 export const getActivos = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -68,11 +56,13 @@ export const getActivos = async (req: AuthRequest, res: Response): Promise<void>
 
     let empresaIds: number[] | undefined = undefined;
     let sucursalIds: number[] | undefined = undefined;
+    let pureEmpresaIds: number[] | undefined = undefined;
 
-    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO' && !custodioId && !empresaIdFilter && !sucursalIdFilter) {
+    if (req.currentUser && req.currentUser.rol_nombre !== 'ADMIN' && req.currentUser.rol_nombre !== 'SUPERVISOR' && !custodioId && !empresaIdFilter && !sucursalIdFilter) {
       const assigned = await getAssignedSucursales(req.currentUser.id);
       empresaIds = assigned.empresaIds;
       sucursalIds = assigned.sucursalIds;
+      pureEmpresaIds = assigned.pureEmpresaIds;
     }
 
     const activosResult = await inventarioService.getActivos(
@@ -84,7 +74,8 @@ export const getActivos = async (req: AuthRequest, res: Response): Promise<void>
       custodioId,
       empresaIdFilter,
       sucursalIds,
-      sucursalIdFilter
+      sucursalIdFilter,
+      pureEmpresaIds
     );
     res.json(activosResult);
   } catch (error: any) {

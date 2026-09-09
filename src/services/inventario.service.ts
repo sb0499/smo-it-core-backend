@@ -12,22 +12,36 @@ export const getActivos = async (
   custodioId?: number,
   empresaIdFilter?: number,
   sucursalIds?: number[],
-  sucursalIdFilter?: number
+  sucursalIdFilter?: number,
+  pureEmpresaIds?: number[]
 ) => {
   const skip = (page - 1) * limit;
   let whereClauses: string[] = [];
   const params: any[] = [];
 
-  if (sucursalIds && sucursalIds.length > 0) {
-    whereClauses.push(`a.sucursal_id IN (${sucursalIds.map(() => '?').join(',')})`);
-    params.push(...sucursalIds);
-  } else if (sucursalIds) {
-    whereClauses.push('1=0');
-  }
-
   if (empresaIds && empresaIds.length > 0) {
-    whereClauses.push(`a.empresa_id IN (${empresaIds.map(() => '?').join(',')})`);
-    params.push(...empresaIds);
+    const conditions: string[] = [];
+    const condParams: any[] = [];
+
+    if (pureEmpresaIds && pureEmpresaIds.length > 0) {
+      conditions.push(`a.empresa_id IN (${pureEmpresaIds.map(() => '?').join(',')})`);
+      condParams.push(...pureEmpresaIds);
+    }
+
+    if (sucursalIds && sucursalIds.length > 0) {
+      conditions.push(`a.sucursal_id IN (${sucursalIds.map(() => '?').join(',')})`);
+      condParams.push(...sucursalIds);
+      conditions.push(`(a.empresa_id IN (${empresaIds.map(() => '?').join(',')}) AND a.sucursal_id IS NULL)`);
+      condParams.push(...empresaIds);
+    }
+
+    if (conditions.length > 0) {
+      whereClauses.push(`(${conditions.join(' OR ')})`);
+      params.push(...condParams);
+    } else {
+      whereClauses.push(`a.empresa_id IN (${empresaIds.map(() => '?').join(',')})`);
+      params.push(...empresaIds);
+    }
   } else if (empresaIds) {
     whereClauses.push('1=0');
   }
