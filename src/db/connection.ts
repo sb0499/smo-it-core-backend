@@ -566,6 +566,39 @@ async function initDbSchema() {
       }
     }
 
+    // Check and add missing columns to ticket table
+    const [colsTicket] = await pool.query<any[]>(`SHOW COLUMNS FROM ticket`);
+    const ticketColNames = colsTicket.map((c: any) => c.Field);
+    if (!ticketColNames.includes('sucursal_id')) {
+      console.log('Adding sucursal_id column to ticket table...');
+      await pool.query(`ALTER TABLE ticket ADD COLUMN sucursal_id INT NULL`);
+      try {
+        await pool.query(`ALTER TABLE ticket ADD CONSTRAINT fk_ticket_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursal(id) ON DELETE SET NULL`);
+      } catch (err: any) {
+        console.log('Constraint fk_ticket_sucursal note:', err.message);
+      }
+    }
+    if (!ticketColNames.includes('nivel_soporte')) {
+      console.log('Adding nivel_soporte column to ticket table...');
+      await pool.query(`ALTER TABLE ticket ADD COLUMN nivel_soporte ENUM('N1','N2','N3') DEFAULT 'N1'`);
+    }
+    if (!ticketColNames.includes('grupo_n2')) {
+      console.log('Adding grupo_n2 column to ticket table...');
+      await pool.query(`ALTER TABLE ticket ADD COLUMN grupo_n2 ENUM('Infraestructura', 'Desarrollo') DEFAULT NULL`);
+    }
+    if (!ticketColNames.includes('sla_paused_at')) {
+      console.log('Adding sla_paused_at column to ticket table...');
+      await pool.query(`ALTER TABLE ticket ADD COLUMN sla_paused_at TIMESTAMP NULL DEFAULT NULL`);
+    }
+    if (!ticketColNames.includes('sla_acumulado_pausa_segundos')) {
+      console.log('Adding sla_acumulado_pausa_segundos column to ticket table...');
+      await pool.query(`ALTER TABLE ticket ADD COLUMN sla_acumulado_pausa_segundos INT DEFAULT 0`);
+    }
+    if (!ticketColNames.includes('bitacora_dinamica')) {
+      console.log('Adding bitacora_dinamica column to ticket table...');
+      await pool.query(`ALTER TABLE ticket ADD COLUMN bitacora_dinamica JSON NULL`);
+    }
+
     // Create base_conocimiento table if not exists
     console.log('Checking/creating base_conocimiento table...');
     await pool.query(`

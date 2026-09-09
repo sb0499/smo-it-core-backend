@@ -106,6 +106,7 @@ export const getTicketsPaginated = async (req: AuthRequest, res: Response): Prom
     const result = await ticketService.getTicketsPaginated(req.currentUser, page, limit, excludeStatus, estado, search);
     res.json(result);
   } catch (error: any) {
+    console.error('Error in getTicketsPaginated:', error);
     res.status(500).json({ detail: 'Error al obtener tickets paginados', error: error.message });
   }
 };

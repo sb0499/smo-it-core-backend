@@ -855,7 +855,9 @@ export const getTicketsPaginated = async (
   estado?: string, 
   search?: string
 ) => {
-  const skip = (page - 1) * limit;
+  const pageNum = Math.max(1, Number(page) || 1);
+  const limitNum = Math.max(1, Number(limit) || 10);
+  const skip = (pageNum - 1) * limitNum;
   let whereClauses: string[] = [];
   const params: any[] = [];
 
@@ -900,7 +902,7 @@ export const getTicketsPaginated = async (
            u.nombre_completo as tecnico_nombre,
            e.nombre as empresa_nombre,
            s.nombre as sucursal_nombre,
-           JSON_UNQUOTE(t.bitacora_dinamica) as bitacora_dinamica
+           t.bitacora_dinamica as bitacora_raw
     FROM ticket t
     LEFT JOIN usuario u ON t.tecnico_id = u.id
     LEFT JOIN empresa e ON t.empresa_id = e.id
@@ -909,20 +911,33 @@ export const getTicketsPaginated = async (
     ORDER BY t.created_at DESC
     LIMIT ? OFFSET ?
   `;
-  const selectParams = [...params, limit, skip];
+  const selectParams = [...params, limitNum, skip];
   const [dataRows] = await pool.query<RowDataPacket[]>(selectQuery, selectParams);
 
-  const data = dataRows.map(r => ({
-    ...r,
-    bitacora_dinamica: typeof r.bitacora_dinamica === 'string'
-      ? JSON.parse(r.bitacora_dinamica)
-      : r.bitacora_dinamica || []
-  }));
+  const data = dataRows.map(r => {
+    let parsedBitacora = [];
+    if (r.bitacora_raw) {
+      if (typeof r.bitacora_raw === 'string') {
+        try {
+          parsedBitacora = JSON.parse(r.bitacora_raw);
+        } catch (e) {
+          parsedBitacora = [];
+        }
+      } else if (Array.isArray(r.bitacora_raw) || typeof r.bitacora_raw === 'object') {
+        parsedBitacora = r.bitacora_raw;
+      }
+    }
+    const { bitacora_raw, ...rest } = r;
+    return {
+      ...rest,
+      bitacora_dinamica: parsedBitacora
+    };
+  });
 
   return {
     total,
-    page,
-    limit,
+    page: pageNum,
+    limit: limitNum,
     data
   };
 };
