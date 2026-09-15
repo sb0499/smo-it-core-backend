@@ -736,3 +736,28 @@ export const descargarActaIngresoDevolucion = async (req: AuthRequest, res: Resp
   }
 };
 
+export const procesarMantenimientoActivo = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const activoId = parseInt(req.params.activo_id);
+    if (isNaN(activoId)) {
+      res.status(400).json({ detail: 'ID de activo inválido' });
+      return;
+    }
+    const { accion, persona_id, observaciones } = req.body;
+    if (!accion || !['Reasignar', 'Stock', 'Baja'].includes(accion)) {
+      res.status(400).json({ detail: 'Debe especificar una acción válida (Reasignar, Stock, Baja)' });
+      return;
+    }
+
+    const activoActualizado = await inventarioService.procesarMantenimientoActivo(
+      activoId,
+      { accion, persona_id, observaciones },
+      req.currentUser.id
+    );
+
+    res.json({ message: 'Proceso de mantenimiento registrado con éxito', activo: activoActualizado });
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message || 'Error al procesar mantenimiento del activo' });
+  }
+};
+

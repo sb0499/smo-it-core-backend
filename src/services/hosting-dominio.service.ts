@@ -4,7 +4,7 @@ import { crearNotificacion, enviarCorreo } from './notificacion.service';
 
 export interface HostingDominio {
   id: number;
-  tipo: 'HOSTING' | 'DOMINIO';
+  tipo: 'HOSTING' | 'DOMINIO' | 'LICENCIA' | 'SERVICIO' | 'FIRMA' | string;
   nombre: string;
   detalle?: string;
   pagado_hasta: string;
@@ -28,7 +28,7 @@ const ensureTableExists = async () => {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS hosting_dominio (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        tipo ENUM('HOSTING', 'DOMINIO') NOT NULL,
+        tipo VARCHAR(50) NOT NULL,
         nombre VARCHAR(255) NOT NULL,
         detalle TEXT NULL,
         pagado_hasta DATE NOT NULL,
@@ -52,7 +52,7 @@ const ensureTableExists = async () => {
 
 export const getHostingDominios = async (
   currentUser: any,
-  tipo?: 'HOSTING' | 'DOMINIO',
+  tipo?: string,
   empresaId?: number,
   search?: string
 ) => {
@@ -94,7 +94,7 @@ export const getHostingDominios = async (
       DATEDIFF(hd.pagado_hasta, CURDATE()) as dias_restantes,
       CASE 
         WHEN DATEDIFF(hd.pagado_hasta, CURDATE()) < 0 THEN 'VENCIDO'
-        WHEN DATEDIFF(hd.pagado_hasta, CURDATE()) <= 30 THEN 'POR_VENCER'
+        WHEN DATEDIFF(hd.pagado_hasta, CURDATE()) <= 60 THEN 'POR_VENCER'
         ELSE 'VIGENTE'
       END as estado_vencimiento
     FROM hosting_dominio hd
@@ -103,7 +103,7 @@ export const getHostingDominios = async (
     LEFT JOIN usuario u ON hd.creador_id = u.id
     ${whereStr}
     ORDER BY 
-      CASE WHEN DATEDIFF(hd.pagado_hasta, CURDATE()) <= 30 THEN 0 ELSE 1 END,
+      CASE WHEN DATEDIFF(hd.pagado_hasta, CURDATE()) <= 60 THEN 0 ELSE 1 END,
       hd.pagado_hasta ASC,
       hd.nombre ASC
   `;
@@ -122,7 +122,7 @@ export const getHostingDominioById = async (id: number) => {
       DATEDIFF(hd.pagado_hasta, CURDATE()) as dias_restantes,
       CASE 
         WHEN DATEDIFF(hd.pagado_hasta, CURDATE()) < 0 THEN 'VENCIDO'
-        WHEN DATEDIFF(hd.pagado_hasta, CURDATE()) <= 30 THEN 'POR_VENCER'
+        WHEN DATEDIFF(hd.pagado_hasta, CURDATE()) <= 60 THEN 'POR_VENCER'
         ELSE 'VIGENTE'
       END as estado_vencimiento
     FROM hosting_dominio hd
@@ -196,7 +196,7 @@ export const deleteHostingDominio = async (id: number) => {
 };
 
 export const verificarExpiracionesHostingsDominios = async () => {
-  console.log('[Cron] Verificando vencimientos de Hostings y Dominios (Alerta <= 30 días)...');
+  console.log('[Cron] Verificando vencimientos de Hostings, Dominios, Licencias, Servicios y Firmas (Alerta <= 60 días)...');
   try {
     await ensureTableExists();
     const query = `
@@ -208,13 +208,13 @@ export const verificarExpiracionesHostingsDominios = async () => {
       FROM hosting_dominio hd
       LEFT JOIN usuario u ON hd.creador_id = u.id
       WHERE hd.is_active = 1
-        AND DATEDIFF(hd.pagado_hasta, CURDATE()) <= 30
+        AND DATEDIFF(hd.pagado_hasta, CURDATE()) <= 60
         AND (hd.ultima_notificacion IS NULL OR hd.ultima_notificacion < CURDATE())
     `;
 
     const [expiringItems] = await pool.query<RowDataPacket[]>(query);
     if (!expiringItems || expiringItems.length === 0) {
-      console.log('[Cron] No hay Hostings ni Dominios próximos a vencer pendientes de notificación hoy.');
+      console.log('[Cron] No hay servicios próximos a vencer pendientes de notificación hoy.');
       return;
     }
 
@@ -226,16 +226,24 @@ export const verificarExpiracionesHostingsDominios = async () => {
        WHERE r.nombre IN ('ADMIN', 'SUPERVISOR') AND u.is_active = 1`
     );
 
+    const tipoMap: Record<string, string> = {
+      'HOSTING': 'Hosting',
+      'DOMINIO': 'Dominio',
+      'LICENCIA': 'Licencia',
+      'SERVICIO': 'Servicio',
+      'FIRMA': 'Firma Digital'
+    };
+
     for (const item of expiringItems) {
-      const tipoLabel = item.tipo === 'HOSTING' ? 'Hosting' : 'Dominio';
+      const tipoLabel = tipoMap[item.tipo] || item.tipo;
       const diasMsg = item.dias_restantes < 0 
         ? `venció hace ${Math.abs(item.dias_restantes)} días` 
         : item.dias_restantes === 0 
           ? 'vence el día de HOY' 
           : `vencerá en ${item.dias_restantes} días (Fecha: ${item.pagado_hasta.toISOString ? item.pagado_hasta.toISOString().split('T')[0] : item.pagado_hasta})`;
 
-      const titulo = `⚠️ Alerta Pago de ${tipoLabel}: ${item.nombre}`;
-      const mensaje = `El ${tipoLabel} "${item.nombre}" ${diasMsg}. Por favor gestionar la renovación del pago.`;
+      const titulo = `Alerta Pago de ${tipoLabel}: ${item.nombre}`;
+      const mensaje = `El servicio (${tipoLabel}) "${item.nombre}" ${diasMsg}. Por favor gestionar la renovación del pago.`;
 
       // Set to keep track of notified users to prevent duplicate notifications
       const notifiedUserIds = new Set<number>();

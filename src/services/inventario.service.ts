@@ -107,12 +107,14 @@ export const getActivos = async (
   let selectQuery = `
     SELECT a.*, p.nombre as persona_nombre, p.cedula as persona_cedula,
            p.departamento as persona_departamento, p.cargo as persona_cargo,
+           p_ult.nombre as ultimo_custodio_nombre,
            prov.nombre as proveedor_nombre, prov.contacto as proveedor_contacto,
            te.nombre as tipo_equipo_nombre, e.nombre as empresa_nombre,
            b.nombre as bodega_nombre, suc.nombre as sucursal_nombre
     FROM activo a
     LEFT JOIN egreso_bodega eb ON a.egreso_bodega_id = eb.id
     LEFT JOIN persona p ON p.id = COALESCE(a.persona_id, eb.custodio_id)
+    LEFT JOIN persona p_ult ON p_ult.id = a.ultimo_custodio_id
     LEFT JOIN proveedor prov ON a.proveedor_id = prov.id
     LEFT JOIN tipo_equipo te ON a.tipo_equipo_id = te.id
     LEFT JOIN empresa e ON a.empresa_id = e.id
@@ -290,10 +292,18 @@ export const cambiarEstadoActivo = async (activoId: number, nuevoEstado: string,
   const estadoAnterior = existing[0].estado;
   const personaId = existing[0].persona_id;
   const limpiarPersona = ['Baja', 'Mantenimiento'].includes(nuevoEstado);
-  await pool.query(
-    `UPDATE activo SET estado = ?, persona_id = ? WHERE id = ?`,
-    [nuevoEstado, limpiarPersona ? null : personaId, activoId]
-  );
+  
+  if (nuevoEstado === 'Mantenimiento' && personaId) {
+    await pool.query(
+      `UPDATE activo SET estado = ?, persona_id = ?, ultimo_custodio_id = ? WHERE id = ?`,
+      [nuevoEstado, null, personaId, activoId]
+    );
+  } else {
+    await pool.query(
+      `UPDATE activo SET estado = ?, persona_id = ? WHERE id = ?`,
+      [nuevoEstado, limpiarPersona ? null : personaId, activoId]
+    );
+  }
   await pool.query(
     `INSERT INTO movimiento_inventario (activo_id, desde_persona_id, hacia_persona_id, usuario_id, tipo, observaciones)
      VALUES (?, ?, NULL, ?, 'Cambio de Estado', ?)`,
@@ -1043,6 +1053,51 @@ export const createRecepcionBodega = async (
 
   const estadoDestino = data.estado_destino && ['Stock', 'Mantenimiento', 'Baja'].includes(data.estado_destino) ? data.estado_destino : 'Stock';
 
+  // Si el destino es Mantenimiento: no generar Acta de Recepción, ni Ingreso a Bodega, ni Ticket de Soporte
+  if (estadoDestino === 'Mantenimiento') {
+    const [colsActivo] = await pool.query<RowDataPacket[]>('SHOW COLUMNS FROM activo');
+    const fieldNames = colsActivo.map((c: any) => c.Field);
+
+    for (const activoId of data.activo_ids) {
+      const setClauses = ["estado = 'Mantenimiento'"];
+      const setParams: any[] = [];
+
+      if (fieldNames.includes('ultimo_custodio_id')) {
+        setClauses.push("ultimo_custodio_id = COALESCE(persona_id, ?)");
+        setParams.push(data.persona_entrega_id);
+      }
+      if (fieldNames.includes('persona_id')) {
+        setClauses.push("persona_id = NULL");
+      }
+      if (fieldNames.includes('custodio_id')) {
+        setClauses.push("custodio_id = NULL");
+      }
+      if (fieldNames.includes('egreso_bodega_id')) {
+        setClauses.push("egreso_bodega_id = NULL");
+      }
+      setParams.push(activoId);
+
+      await pool.query(
+        `UPDATE activo SET ${setClauses.join(', ')} WHERE id = ?`,
+        setParams
+      );
+
+      await pool.query(
+        `INSERT INTO movimiento_inventario 
+         (activo_id, desde_persona_id, usuario_id, tipo, observaciones)
+         VALUES (?, ?, ?, 'Cambio de Estado', ?)`,
+        [
+          activoId,
+          data.persona_entrega_id,
+          usuarioId || null,
+          `Enviado a Mantenimiento desde el custodio. ${data.observaciones || ''}`
+        ]
+      );
+    }
+
+    return { id: null, message: 'Activos enviados a Mantenimiento exitosamente' };
+  }
+
   const codigoRecepcion = await generateCodigoRecepcion(data.empresa_id);
   const revisadoPor = data.revisado_por || 'Paulina Porras';
   const revisadoPorCargo = data.revisado_por_cargo || 'JEFE DE SISTEMAS';
@@ -1115,6 +1170,10 @@ export const createRecepcionBodega = async (
     const setClauses = ["estado = ?", "bodega_id = COALESCE(?, bodega_id)", "recepcion_bodega_id = ?", "ingreso_bodega_id = ?"];
     const setParams: any[] = [estadoDestino, data.bodega_id || null, recepcionId, ingresoId];
 
+    if (fieldNames.includes('ultimo_custodio_id')) {
+      setClauses.push("ultimo_custodio_id = COALESCE(persona_id, ?)");
+      setParams.push(data.persona_entrega_id);
+    }
     if (fieldNames.includes('persona_id')) {
       setClauses.push("persona_id = NULL");
     }
@@ -1264,5 +1323,102 @@ export const getRecepcionBodegaById = async (recepcionId: number) => {
 
   recepcion.activos = activosRows;
   return recepcion;
+};
+
+export const procesarMantenimientoActivo = async (
+  activoId: number,
+  data: {
+    accion: 'Reasignar' | 'Stock' | 'Baja';
+    persona_id?: number;
+    observaciones?: string;
+  },
+  usuarioId: number
+) => {
+  const [existing] = await pool.query<RowDataPacket[]>(
+    `SELECT a.*, p.nombre as ultimo_custodio_nombre 
+     FROM activo a 
+     LEFT JOIN persona p ON a.ultimo_custodio_id = p.id 
+     WHERE a.id = ?`,
+    [activoId]
+  );
+  if (!existing.length) throw new Error('Activo no encontrado');
+  const activo = existing[0];
+
+  if (activo.estado !== 'Mantenimiento') {
+    throw new Error('El activo no se encuentra en estado de Mantenimiento');
+  }
+
+  const { accion, persona_id, observaciones } = data;
+  let nuevoEstado: 'Asignado' | 'Stock' | 'Baja';
+  let nuevoPersonaId: number | null = null;
+  let tipoMovimiento: string;
+  let obsMovimiento: string;
+
+  if (accion === 'Reasignar') {
+    nuevoEstado = 'Asignado';
+    nuevoPersonaId = persona_id || activo.ultimo_custodio_id;
+    if (!nuevoPersonaId) {
+      throw new Error('Debe especificar o tener registrado un custodio para reasignar el activo.');
+    }
+    tipoMovimiento = 'Asignación';
+    obsMovimiento = `Salida de Mantenimiento: Reasignado a custodio. ${observaciones || ''}`;
+  } else if (accion === 'Stock') {
+    nuevoEstado = 'Stock';
+    nuevoPersonaId = null;
+    tipoMovimiento = 'Cambio de Estado';
+    obsMovimiento = `Salida de Mantenimiento: Retornado a Stock en Bodega. ${observaciones || ''}`;
+  } else if (accion === 'Baja') {
+    nuevoEstado = 'Baja';
+    nuevoPersonaId = null;
+    tipoMovimiento = 'Baja';
+    obsMovimiento = `Salida de Mantenimiento: Dado de Baja (Sin solución / No reparable). ${observaciones || ''}`;
+  } else {
+    throw new Error('Acción de mantenimiento no válida');
+  }
+
+  // Update activo
+  await pool.query(
+    `UPDATE activo SET estado = ?, persona_id = ? WHERE id = ?`,
+    [nuevoEstado, nuevoPersonaId, activoId]
+  );
+
+  // Insert movimiento_inventario
+  await pool.query(
+    `INSERT INTO movimiento_inventario (activo_id, desde_persona_id, hacia_persona_id, usuario_id, tipo, observaciones)
+     VALUES (?, NULL, ?, ?, ?, ?)`,
+    [activoId, nuevoPersonaId, usuarioId, tipoMovimiento, obsMovimiento.trim()]
+  );
+
+  // Find and update/resolve associated Mantenimiento Ticket if any
+  try {
+    const searchPattern = `%Mantenimiento: ${activo.codigo}%`;
+    const [tickets] = await pool.query<RowDataPacket[]>(
+      `SELECT id, estado FROM ticket 
+       WHERE titulo LIKE ? AND estado NOT IN ('Resuelto', 'Cerrado', 'Cancelado')
+       ORDER BY id DESC LIMIT 1`,
+      [searchPattern]
+    );
+    if (tickets.length > 0) {
+      const ticketId = tickets[0].id;
+      const resolucionNota = `[Mantenimiento Finalizado]: El activo ${activo.codigo} salió de mantenimiento (${accion === 'Reasignar' ? 'Re-asignado a custodio' : accion === 'Stock' ? 'Retornado a Stock' : 'Dado de Baja'}). Observaciones: ${observaciones || 'Sin detalles'}`;
+      
+      // Update ticket status to 'Resuelto'
+      await pool.query(
+        `UPDATE ticket SET estado = 'Resuelto', updated_at = NOW() WHERE id = ?`,
+        [ticketId]
+      );
+      // Add bitacora entry
+      await pool.query(
+        `INSERT INTO ticket_bitacora (ticket_id, usuario_id, observacion, tipo)
+         VALUES (?, ?, ?, 'Resolución')`,
+        [ticketId, usuarioId, resolucionNota]
+      );
+    }
+  } catch (err) {
+    console.error('Error actualizando ticket de mantenimiento:', err);
+  }
+
+  const [updated] = await pool.query<RowDataPacket[]>(`SELECT * FROM activo WHERE id = ?`, [activoId]);
+  return updated[0];
 };
 

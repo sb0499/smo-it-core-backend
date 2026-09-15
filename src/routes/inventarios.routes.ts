@@ -300,6 +300,7 @@ inventariosRouter.patch('/:activo_id/estado', requireAuth, requireAdminOrTecnico
  *         description: Activo no encontrado
  */
 inventariosRouter.put('/:activo_id', requireAuth, requireAdminOrTecnico, ctrl.updateActivo);
+inventariosRouter.post('/:activo_id/procesar-mantenimiento', requireAuth, requireAdminOrTecnico, ctrl.procesarMantenimientoActivo);
 
 // Importar y Exportar Excel de Inventarios
 inventariosRouter.get('/tipos-excel', requireAuth, requireAdminOrTecnico, ctrl.getTipoInventarios);

@@ -8,19 +8,21 @@ export const getTickets = async (currentUser: any, skip = 0, limit = 100) => {
   let query = `
     SELECT t.*,
            u.nombre_completo as tecnico_nombre,
+           u_n1.nombre_completo as tecnico_n1_nombre,
            e.nombre as empresa_nombre,
            s.nombre as sucursal_nombre,
            JSON_UNQUOTE(t.bitacora_dinamica) as bitacora_dinamica
     FROM ticket t
     LEFT JOIN usuario u ON t.tecnico_id = u.id
+    LEFT JOIN usuario u_n1 ON t.tecnico_n1_id = u_n1.id
     LEFT JOIN empresa e ON t.empresa_id = e.id
     LEFT JOIN sucursal s ON t.sucursal_id = s.id
   `;
   const params: any[] = [];
 
   if (currentUser.rol_nombre === 'TECNICO') {
-    query += ` WHERE t.tecnico_id = ?`;
-    params.push(currentUser.id);
+    query += ` WHERE (t.tecnico_id = ? OR t.tecnico_n1_id = ?)`;
+    params.push(currentUser.id, currentUser.id);
   } else if (currentUser.rol_nombre === 'USUARIO') {
     query += ` WHERE t.creador_id = ?`;
     params.push(currentUser.id);
@@ -188,15 +190,16 @@ export const createTicket = async (data: any, currentUser: any) => {
     `INSERT INTO ticket
       (titulo, descripcion, categoria, empresa_id, sucursal_id, area_solicitante, persona_solicitante,
        medio_solicitud, fecha_final_tentativa, avance_proceso, observaciones, prioridad,
-       estado, nivel_soporte, bitacora_dinamica, creador_id, tecnico_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       estado, nivel_soporte, bitacora_dinamica, creador_id, tecnico_id, tecnico_n1_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.titulo, data.descripcion, data.categoria, data.empresa_id || null, data.sucursal_id || null,
       data.area_solicitante || null, data.persona_solicitante || null,
       data.medio_solicitud || 'Plataforma', data.fecha_final_tentativa || null,
       data.avance_proceso ?? 0, data.observaciones || null,
       data.prioridad || 'Media', data.estado || 'Nuevo',
-      data.nivel_soporte || 'N1', bitacora, currentUser.id, tecnicoAsignado
+      data.nivel_soporte || 'N1', bitacora, currentUser.id, tecnicoAsignado,
+      (data.nivel_soporte === 'N2') ? null : tecnicoAsignado
     ]
   );
 
@@ -277,11 +280,13 @@ export const createTicket = async (data: any, currentUser: any) => {
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT t.*, 
             u.nombre_completo as tecnico_nombre, 
+            u_n1.nombre_completo as tecnico_n1_nombre,
             e.nombre as empresa_nombre, 
             s.nombre as sucursal_nombre,
             JSON_UNQUOTE(t.bitacora_dinamica) as bitacora_dinamica
      FROM ticket t 
      LEFT JOIN usuario u ON t.tecnico_id = u.id 
+     LEFT JOIN usuario u_n1 ON t.tecnico_n1_id = u_n1.id
      LEFT JOIN empresa e ON t.empresa_id = e.id
      LEFT JOIN sucursal s ON t.sucursal_id = s.id
      WHERE t.id = ?`,
@@ -309,8 +314,15 @@ export const updateTicket = async (ticketId: number, data: any, currentUser?: an
     bitacora = [];
   }
 
+  let logs: string[] = [];
   if (currentUser) {
-    let logs: string[] = [];
+    // Restricción Solo Lectura para técnico N1 en tickets asignados a N2/N3
+    if (currentUser.rol_nombre === 'TECNICO' && currentUser.nivel_soporte === 'N1') {
+      if (tOld.tecnico_id !== currentUser.id && (tOld.tecnico_n1_id === currentUser.id || tOld.nivel_soporte !== 'N1')) {
+        throw new Error('El ticket se encuentra asignado a N2/N3. Lo tienes en modo solo lectura para ver sus avances.');
+      }
+    }
+
     if (
       data.nivel_soporte === 'N3' || 
       data.estado === 'Escalado a Proyecto' || 
@@ -383,8 +395,34 @@ export const updateTicket = async (ticketId: number, data: any, currentUser?: an
       : tOld.bitacora_dinamica || []
   };
 
+  // Preservar tecnico_n1_id si cambia tecnico_id y no estaba definido
+  if (tOld.tecnico_id && !tOld.tecnico_n1_id && data.tecnico_id !== undefined && data.tecnico_id !== tOld.tecnico_id) {
+    sets.push('tecnico_n1_id = ?');
+    vals.push(tOld.tecnico_id);
+  }
+
   vals.push(ticketId);
   await pool.query(`UPDATE ticket SET ${sets.join(', ')}, updated_at = NOW() WHERE id = ?`, vals);
+
+  // Notificar al técnico N1 original si existía y no es quien realizó la edición
+  if (tOld.tecnico_n1_id && tOld.tecnico_n1_id !== currentUser?.id) {
+    const [n1Rows] = await pool.query<RowDataPacket[]>(`SELECT email, nombre_completo FROM usuario WHERE id = ?`, [tOld.tecnico_n1_id]);
+    if (n1Rows.length > 0) {
+      const n1User = n1Rows[0];
+      const cambioStr = (currentUser && logs.length > 0) ? logs.join(', ') : `Actualización en el ticket`;
+      crearNotificacion(
+        tOld.tecnico_n1_id,
+        `Avance en Ticket #${ticketId}: ${tOld.titulo}`,
+        `El soporte en N2/N3 fue actualizado por ${currentUser?.nombre_completo || 'el sistema'}: ${cambioStr}.`
+      ).catch(console.error);
+
+      enviarCorreo(
+        n1User.email,
+        `Avance en Ticket #${ticketId}: ${tOld.titulo}`,
+        `Hola ${n1User.nombre_completo},\n\nEl ticket #${ticketId} ("${tOld.titulo}") que asignaste/escalaste ha tenido una actualización por ${currentUser?.nombre_completo || 'el sistema'}:\n\nDetalle: ${cambioStr}\nEstado actual: ${data.estado || tOld.estado}\nObservaciones: ${data.observaciones || tOld.observaciones || 'Sin observaciones'}\n\nIngresa a la plataforma para ver el detalle de los avances.`
+      ).catch(console.error);
+    }
+  }
 
   // Si el ticket se finaliza, enviar notificación al creador del ticket (solicitante)
   if (data.estado === 'Finalizada' && tOld.estado !== 'Finalizada') {
@@ -410,9 +448,14 @@ export const updateTicket = async (ticketId: number, data: any, currentUser?: an
   }
 
   const [rows] = await pool.query<RowDataPacket[]>(`
-    SELECT t.*, u.nombre_completo as tecnico_nombre, e.nombre as empresa_nombre, s.nombre as sucursal_nombre 
+    SELECT t.*, 
+           u.nombre_completo as tecnico_nombre, 
+           u_n1.nombre_completo as tecnico_n1_nombre,
+           e.nombre as empresa_nombre, 
+           s.nombre as sucursal_nombre 
     FROM ticket t 
     LEFT JOIN usuario u ON t.tecnico_id = u.id 
+    LEFT JOIN usuario u_n1 ON t.tecnico_n1_id = u_n1.id
     LEFT JOIN empresa e ON t.empresa_id = e.id 
     LEFT JOIN sucursal s ON t.sucursal_id = s.id
     WHERE t.id = ?`, [ticketId]);
@@ -530,6 +573,9 @@ export const escalarTicketAN2 = async (
     bitacora = [];
   }
 
+  // Preservar N1 en tecnico_n1_id
+  const n1IdToKeep = ticket.tecnico_n1_id || (currentUser.nivel_soporte === 'N1' || currentUser.rol_nombre === 'TECNICO' ? currentUser.id : ticket.tecnico_id) || currentUser.id;
+
   bitacora.push({
     accion: `Ticket escalado a Nivel 2 (${grupo_n2}). Asignado a: ${finalTecnicoNombre}`,
     fecha: new Date().toISOString(),
@@ -541,13 +587,32 @@ export const escalarTicketAN2 = async (
      SET nivel_soporte = 'N2', 
          grupo_n2 = ?,
          tecnico_id = ?, 
+         tecnico_n1_id = ?,
          bitacora_dinamica = ?, 
          updated_at = NOW() 
      WHERE id = ?`,
-    [grupo_n2, finalTecnicoId, JSON.stringify(bitacora), ticketId]
+    [grupo_n2, finalTecnicoId, n1IdToKeep, JSON.stringify(bitacora), ticketId]
   );
 
-  // Enviar correos y notificaciones internas si hay técnico asignado
+  // Enviar correo y notificación al N1 original si no es quien escaló
+  if (n1IdToKeep && n1IdToKeep !== currentUser.id) {
+    const [n1Rows] = await pool.query<RowDataPacket[]>(`SELECT email, nombre_completo FROM usuario WHERE id = ?`, [n1IdToKeep]);
+    if (n1Rows.length > 0) {
+      crearNotificacion(
+        n1IdToKeep,
+        `Ticket Escalado a N2 (${grupo_n2})`,
+        `El ticket: "${ticket.titulo}" fue escalado a N2 (${grupo_n2}) por ${currentUser.nombre_completo} y asignado a ${finalTecnicoNombre}. Podrás seguir viendo los avances en modo lectura.`
+      ).catch(console.error);
+
+      enviarCorreo(
+        n1Rows[0].email,
+        `Ticket Escalado a N2: ${ticket.titulo}`,
+        `Hola ${n1Rows[0].nombre_completo},\n\nEl ticket "${ticket.titulo}" que tenías asignado ha sido escalado a Nivel 2 (${grupo_n2}) por ${currentUser.nombre_completo} y asignado a ${finalTecnicoNombre}.\n\nEl ticket permanecerá en tu bandeja en modo Solo Lectura para que puedas monitorear sus avances.`
+      ).catch(console.error);
+    }
+  }
+
+  // Enviar correos y notificaciones internas si hay técnico asignado N2
   if (finalTecnicoId && finalTecnicoEmail) {
     enviarCorreo(
       finalTecnicoEmail,
@@ -572,9 +637,14 @@ export const escalarTicketAN2 = async (
   }
 
   const [updatedRows] = await pool.query<RowDataPacket[]>(
-    `SELECT t.*, u.nombre_completo as tecnico_nombre, e.nombre as empresa_nombre, s.nombre as sucursal_nombre 
+    `SELECT t.*, 
+            u.nombre_completo as tecnico_nombre, 
+            u_n1.nombre_completo as tecnico_n1_nombre,
+            e.nombre as empresa_nombre, 
+            s.nombre as sucursal_nombre 
      FROM ticket t 
      LEFT JOIN usuario u ON t.tecnico_id = u.id 
+     LEFT JOIN usuario u_n1 ON t.tecnico_n1_id = u_n1.id
      LEFT JOIN empresa e ON t.empresa_id = e.id 
      LEFT JOIN sucursal s ON t.sucursal_id = s.id
      WHERE t.id = ?`,
@@ -622,10 +692,32 @@ export const escalarTicketAProveedor = async (ticketId: number, currentUser: any
     [JSON.stringify(bitacora), ticketId]
   );
 
+  if (ticket.tecnico_n1_id && ticket.tecnico_n1_id !== currentUser.id) {
+    const [n1Rows] = await pool.query<RowDataPacket[]>(`SELECT email, nombre_completo FROM usuario WHERE id = ?`, [ticket.tecnico_n1_id]);
+    if (n1Rows.length > 0) {
+      crearNotificacion(
+        ticket.tecnico_n1_id,
+        `Ticket Escalado a Proveedor (N3): ${ticket.titulo}`,
+        `El ticket "${ticket.titulo}" fue elevado a Proveedor (N3) por ${currentUser.nombre_completo}. SLA Pausado.`
+      ).catch(console.error);
+
+      enviarCorreo(
+        n1Rows[0].email,
+        `Ticket Escalado a Proveedor (N3): ${ticket.titulo}`,
+        `Hola ${n1Rows[0].nombre_completo},\n\nEl ticket "${ticket.titulo}" que habías asignado/atendido fue elevado a Proveedor (N3) por ${currentUser.nombre_completo}.\nEl tiempo SLA ha sido pausado mientras atiende el proveedor.`
+      ).catch(console.error);
+    }
+  }
+
   const [updatedRows] = await pool.query<RowDataPacket[]>(
-    `SELECT t.*, u.nombre_completo as tecnico_nombre, e.nombre as empresa_nombre, s.nombre as sucursal_nombre 
+    `SELECT t.*, 
+            u.nombre_completo as tecnico_nombre, 
+            u_n1.nombre_completo as tecnico_n1_nombre,
+            e.nombre as empresa_nombre, 
+            s.nombre as sucursal_nombre 
      FROM ticket t 
      LEFT JOIN usuario u ON t.tecnico_id = u.id 
+     LEFT JOIN usuario u_n1 ON t.tecnico_n1_id = u_n1.id
      LEFT JOIN empresa e ON t.empresa_id = e.id 
      LEFT JOIN sucursal s ON t.sucursal_id = s.id
      WHERE t.id = ?`,
@@ -701,10 +793,32 @@ export const escalarTicketAProyecto = async (ticketId: number, currentUser: any)
     [JSON.stringify(bitacora), ticketId]
   );
 
+  if (ticket.tecnico_n1_id && ticket.tecnico_n1_id !== currentUser.id) {
+    const [n1Rows] = await pool.query<RowDataPacket[]>(`SELECT email, nombre_completo FROM usuario WHERE id = ?`, [ticket.tecnico_n1_id]);
+    if (n1Rows.length > 0) {
+      crearNotificacion(
+        ticket.tecnico_n1_id,
+        `Ticket Elevado a Proyecto: ${ticket.titulo}`,
+        `El ticket "${ticket.titulo}" fue elevado a Proyecto por ${currentUser.nombre_completo}.`
+      ).catch(console.error);
+
+      enviarCorreo(
+        n1Rows[0].email,
+        `Ticket Elevado a Proyecto: ${ticket.titulo}`,
+        `Hola ${n1Rows[0].nombre_completo},\n\nEl ticket "${ticket.titulo}" que habías asignado/atendido fue elevado a Proyecto por ${currentUser.nombre_completo}.`
+      ).catch(console.error);
+    }
+  }
+
   const [updatedRows] = await pool.query<RowDataPacket[]>(
-    `SELECT t.*, u.nombre_completo as tecnico_nombre, e.nombre as empresa_nombre, s.nombre as sucursal_nombre 
+    `SELECT t.*, 
+            u.nombre_completo as tecnico_nombre, 
+            u_n1.nombre_completo as tecnico_n1_nombre,
+            e.nombre as empresa_nombre, 
+            s.nombre as sucursal_nombre 
      FROM ticket t 
      LEFT JOIN usuario u ON t.tecnico_id = u.id 
+     LEFT JOIN usuario u_n1 ON t.tecnico_n1_id = u_n1.id
      LEFT JOIN empresa e ON t.empresa_id = e.id 
      LEFT JOIN sucursal s ON t.sucursal_id = s.id
      WHERE t.id = ?`,
@@ -862,8 +976,8 @@ export const getTicketsPaginated = async (
   const params: any[] = [];
 
   if (currentUser.rol_nombre === 'TECNICO') {
-    whereClauses.push(`t.tecnico_id = ?`);
-    params.push(currentUser.id);
+    whereClauses.push(`(t.tecnico_id = ? OR t.tecnico_n1_id = ?)`);
+    params.push(currentUser.id, currentUser.id);
   } else if (currentUser.rol_nombre === 'USUARIO') {
     whereClauses.push(`t.creador_id = ?`);
     params.push(currentUser.id);
@@ -900,11 +1014,13 @@ export const getTicketsPaginated = async (
   const selectQuery = `
     SELECT t.*,
            u.nombre_completo as tecnico_nombre,
+           u_n1.nombre_completo as tecnico_n1_nombre,
            e.nombre as empresa_nombre,
            s.nombre as sucursal_nombre,
            t.bitacora_dinamica as bitacora_raw
     FROM ticket t
     LEFT JOIN usuario u ON t.tecnico_id = u.id
+    LEFT JOIN usuario u_n1 ON t.tecnico_n1_id = u_n1.id
     LEFT JOIN empresa e ON t.empresa_id = e.id
     LEFT JOIN sucursal s ON t.sucursal_id = s.id
     ${whereStr}

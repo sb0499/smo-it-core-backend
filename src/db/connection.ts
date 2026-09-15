@@ -158,6 +158,12 @@ async function initDbSchema() {
       await pool.query(`ALTER TABLE activo ADD CONSTRAINT fk_activo_bodega FOREIGN KEY (bodega_id) REFERENCES bodega(id) ON DELETE SET NULL`);
     }
 
+    if (!colNames.includes('ultimo_custodio_id')) {
+      console.log('Adding ultimo_custodio_id column to activo table...');
+      await pool.query(`ALTER TABLE activo ADD COLUMN ultimo_custodio_id INT NULL`);
+      await pool.query(`ALTER TABLE activo ADD CONSTRAINT fk_activo_ultimo_custodio FOREIGN KEY (ultimo_custodio_id) REFERENCES persona(id) ON DELETE SET NULL`);
+    }
+
     if (colNames.includes('origen_excel')) {
       console.log('Dropping legacy origen_excel column from activo table...');
       try {
@@ -497,6 +503,7 @@ async function initDbSchema() {
     const alterQueries = [
       'ALTER TABLE ticket MODIFY creador_id INT NULL',
       'ALTER TABLE ticket MODIFY tecnico_id INT NULL',
+      'ALTER TABLE ticket MODIFY tecnico_n1_id INT NULL',
       'ALTER TABLE proyecto MODIFY creador_id INT NULL',
       'ALTER TABLE tarea_proyecto MODIFY responsable_id INT NULL',
       'ALTER TABLE subtarea_proyecto MODIFY responsable_id INT NULL',
@@ -539,6 +546,13 @@ async function initDbSchema() {
         CONSTRAINT fk_hd_creador FOREIGN KEY (creador_id) REFERENCES usuario(id) ON DELETE SET NULL
       ) ENGINE=InnoDB;
     `);
+
+    // Modify tipo column in hosting_dominio to VARCHAR(50) to support LICENCIA, SERVICIO, FIRMA
+    try {
+      await pool.query(`ALTER TABLE hosting_dominio MODIFY COLUMN tipo VARCHAR(50) NOT NULL`);
+    } catch (err: any) {
+      console.log('Note on hosting_dominio tipo migration:', err.message);
+    }
 
     // Check and add tecnico_principal_id column to empresa
     const [colsEmpresa] = await pool.query<any[]>(`SHOW COLUMNS FROM empresa`);
@@ -597,6 +611,22 @@ async function initDbSchema() {
     if (!ticketColNames.includes('bitacora_dinamica')) {
       console.log('Adding bitacora_dinamica column to ticket table...');
       await pool.query(`ALTER TABLE ticket ADD COLUMN bitacora_dinamica JSON NULL`);
+    }
+    if (!ticketColNames.includes('tecnico_n1_id')) {
+      console.log('Adding tecnico_n1_id column to ticket table...');
+      await pool.query(`ALTER TABLE ticket ADD COLUMN tecnico_n1_id INT NULL`);
+    }
+
+    // Auto-poblar tecnico_n1_id en tickets existentes si es nulo
+    try {
+      await pool.query(`
+        UPDATE ticket t 
+        JOIN usuario u ON u.rol_id IN (2,4) AND (t.bitacora_dinamica LIKE CONCAT('%', u.nombre_completo, '%') OR t.tecnico_id = u.id) 
+        SET t.tecnico_n1_id = u.id 
+        WHERE t.tecnico_n1_id IS NULL
+      `);
+    } catch (err: any) {
+      console.log('Note on backfill tecnico_n1_id:', err.message);
     }
 
     // Create base_conocimiento table if not exists
