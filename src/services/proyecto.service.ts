@@ -3,6 +3,30 @@ import { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { enviarCorreo, crearNotificacion } from './notificacion.service';
 
 // --- HELPERS DE SEMAFORO Y TIEMPO ---
+export const formatMySQLDateTime = (val: string | Date | null | undefined): string | null => {
+  if (!val) return null;
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return null;
+    return val.toISOString().slice(0, 19).replace('T', ' ');
+  }
+  const str = String(val).trim();
+  if (!str) return null;
+
+  if (str.includes('T')) {
+    const cleanStr = str.split('.')[0].replace('Z', '').replace('T', ' ');
+    if (cleanStr.length === 10) return `${cleanStr} 00:00:00`;
+    return cleanStr;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    return `${str} 00:00:00`;
+  }
+
+  const d = new Date(str);
+  if (isNaN(d.getTime())) return str;
+  return d.toISOString().slice(0, 19).replace('T', ' ');
+};
+
 export const calcularSemaforo = (fechaFinStr: string | Date, estado: string) => {
   if (estado === 'Finalizado') {
     return { semaforo: 'Verde', tiempo_restante: 'Completado' };
@@ -416,10 +440,11 @@ export const getProyectoById = async (id: number, currentUser: any) => {
 };
 
 export const createProyecto = async (data: { nombre: string; descripcion?: string; fecha_fin_estimada: string; tipo_proyecto?: string; ticket_origen_id?: number; miembros?: string }, currentUser: any) => {
+  const formattedFechaFin = formatMySQLDateTime(data.fecha_fin_estimada);
   const [result] = await pool.query<ResultSetHeader>(
     `INSERT INTO proyecto (nombre, descripcion, fecha_fin_estimada, estado, tipo_proyecto, creador_id, ticket_origen_id, miembros)
      VALUES (?, ?, ?, 'Sin Iniciar', ?, ?, ?, ?)`,
-    [data.nombre, data.descripcion || null, data.fecha_fin_estimada, data.tipo_proyecto || 'Otro', currentUser.id, data.ticket_origen_id || null, data.miembros || null]
+    [data.nombre, data.descripcion || null, formattedFechaFin, data.tipo_proyecto || 'Otro', currentUser.id, data.ticket_origen_id || null, data.miembros || null]
   );
 
   const proyectoId = result.insertId;
@@ -467,7 +492,7 @@ export const updateProyecto = async (id: number, data: { nombre?: string; descri
   // Modificaciones permitidas
   const nombre = data.nombre !== undefined ? data.nombre : proj.nombre;
   const descripcion = data.descripcion !== undefined ? data.descripcion : proj.descripcion;
-  const fechaFin = data.fecha_fin_estimada !== undefined ? data.fecha_fin_estimada : proj.fecha_fin_estimada;
+  const fechaFin = data.fecha_fin_estimada !== undefined ? formatMySQLDateTime(data.fecha_fin_estimada) : proj.fecha_fin_estimada;
   const estado = data.estado !== undefined ? data.estado : proj.estado;
   const tipo = data.tipo_proyecto !== undefined ? data.tipo_proyecto : proj.tipo_proyecto;
   const miembros = data.miembros !== undefined ? data.miembros : proj.miembros;
@@ -560,10 +585,11 @@ export const createTarea = async (data: { proyecto_id: number; titulo: string; d
     throw new Error('400: La fecha de fin de la tarea no puede ser posterior a la fecha estimada del proyecto.');
   }
 
+  const formattedFechaFin = formatMySQLDateTime(data.fecha_fin);
   const [result] = await pool.query<ResultSetHeader>(
     `INSERT INTO tarea_proyecto (proyecto_id, titulo, descripcion, fecha_fin, estado, responsable_id)
      VALUES (?, ?, ?, ?, 'Sin Iniciar', ?)`,
-    [data.proyecto_id, data.titulo, data.descripcion || null, data.fecha_fin, data.responsable_id]
+    [data.proyecto_id, data.titulo, data.descripcion || null, formattedFechaFin, data.responsable_id]
   );
 
   const [respRow] = await pool.query<RowDataPacket[]>(`SELECT nombre_completo FROM usuario WHERE id = ?`, [data.responsable_id]);
@@ -630,7 +656,7 @@ export const updateTarea = async (id: number, data: { titulo?: string; descripci
 
   const titulo = data.titulo !== undefined ? data.titulo : tarea.titulo;
   const descripcion = data.descripcion !== undefined ? data.descripcion : tarea.descripcion;
-  const fechaFin = data.fecha_fin !== undefined ? data.fecha_fin : tarea.fecha_fin;
+  const fechaFin = data.fecha_fin !== undefined ? formatMySQLDateTime(data.fecha_fin) : tarea.fecha_fin;
   const responsableId = data.responsable_id !== undefined ? data.responsable_id : tarea.responsable_id;
   
   // Si tiene subtareas, ignorar el avance enviado manualmente por body y dejarlo en el cálculo
@@ -745,10 +771,11 @@ export const createSubtarea = async (data: { tarea_id: number; titulo: string; d
     throw new Error('400: La fecha de fin de la subtarea no puede ser posterior a la fecha de fin de la tarea padre.');
   }
 
+  const formattedFechaFin = formatMySQLDateTime(data.fecha_fin);
   const [result] = await pool.query<ResultSetHeader>(
     `INSERT INTO subtarea_proyecto (tarea_id, titulo, descripcion, fecha_fin, estado, responsable_id)
      VALUES (?, ?, ?, ?, 'Sin Iniciar', ?)`,
-    [data.tarea_id, data.titulo, data.descripcion || null, data.fecha_fin, data.responsable_id]
+    [data.tarea_id, data.titulo, data.descripcion || null, formattedFechaFin, data.responsable_id]
   );
 
   const [respRow] = await pool.query<RowDataPacket[]>(`SELECT nombre_completo FROM usuario WHERE id = ?`, [data.responsable_id]);
@@ -818,7 +845,7 @@ export const updateSubtarea = async (id: number, data: { titulo?: string; descri
 
   const titulo = data.titulo !== undefined ? data.titulo : sub.titulo;
   const descripcion = data.descripcion !== undefined ? data.descripcion : sub.descripcion;
-  const fechaFin = data.fecha_fin !== undefined ? data.fecha_fin : sub.fecha_fin;
+  const fechaFin = data.fecha_fin !== undefined ? formatMySQLDateTime(data.fecha_fin) : sub.fecha_fin;
   const responsableId = data.responsable_id !== undefined ? data.responsable_id : sub.responsable_id;
   const avance = data.avance_porcentaje !== undefined ? data.avance_porcentaje : sub.avance_porcentaje;
   const estado = data.estado !== undefined ? data.estado : sub.estado;
