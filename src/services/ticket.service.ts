@@ -967,7 +967,8 @@ export const getTicketsPaginated = async (
   limit = 10, 
   excludeStatus?: string, 
   estado?: string, 
-  search?: string
+  search?: string,
+  tecnicoId?: number | string
 ) => {
   const pageNum = Math.max(1, Number(page) || 1);
   const limitNum = Math.max(1, Number(limit) || 10);
@@ -991,6 +992,12 @@ export const getTicketsPaginated = async (
   if (estado && estado !== 'todos') {
     whereClauses.push(`t.estado = ?`);
     params.push(estado);
+  }
+
+  if (tecnicoId && Number(tecnicoId) > 0) {
+    const techIdNum = Number(tecnicoId);
+    whereClauses.push(`(t.tecnico_id = ? OR t.tecnico_n1_id = ?)`);
+    params.push(techIdNum, techIdNum);
   }
 
   if (search) {

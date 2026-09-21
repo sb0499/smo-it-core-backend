@@ -19,6 +19,8 @@ export interface SoporteRecurrente {
   is_active: boolean;
   creador_id?: number | null;
   creador_nombre?: string | null;
+  tecnico_id?: number | null;
+  tecnico_nombre?: string | null;
   created_at?: string;
 }
 
@@ -28,7 +30,7 @@ const isManagerOrAdmin = (user: any) => {
   return role === 'ADMIN' || role === 'SUPERVISOR';
 };
 
-export const getSoportesRecurrentes = async (currentUser: any, page = 1, limit = 10, search = '') => {
+export const getSoportesRecurrentes = async (currentUser: any, page = 1, limit = 10, search = '', tecnicoId?: number | string) => {
   const skip = (page - 1) * limit;
   let whereClauses: string[] = [];
   const params: any[] = [];
@@ -37,6 +39,12 @@ export const getSoportesRecurrentes = async (currentUser: any, page = 1, limit =
     whereClauses.push('(sr.titulo LIKE ? OR sr.descripcion LIKE ? OR sr.categoria LIKE ?)');
     const wildcard = `%${search}%`;
     params.push(wildcard, wildcard, wildcard);
+  }
+
+  if (tecnicoId && Number(tecnicoId) > 0) {
+    const techIdNum = Number(tecnicoId);
+    whereClauses.push('(sr.tecnico_id = ? OR sr.creador_id = ?)');
+    params.push(techIdNum, techIdNum);
   }
 
   // ADMIN and SUPERVISOR can see all recurring support tasks. Other users only see their own created rules.
@@ -54,10 +62,11 @@ export const getSoportesRecurrentes = async (currentUser: any, page = 1, limit =
 
   // Get paginated data
   const selectQuery = `
-    SELECT sr.*, e.nombre as empresa_nombre, u.nombre_completo as creador_nombre 
+    SELECT sr.*, e.nombre as empresa_nombre, u.nombre_completo as creador_nombre, u_tech.nombre_completo as tecnico_nombre
     FROM soporte_recurrente sr 
     LEFT JOIN empresa e ON sr.empresa_id = e.id 
     LEFT JOIN usuario u ON sr.creador_id = u.id 
+    LEFT JOIN usuario u_tech ON sr.tecnico_id = u_tech.id
     ${whereStr}
     ORDER BY sr.id DESC
     LIMIT ? OFFSET ?
@@ -75,10 +84,11 @@ export const getSoportesRecurrentes = async (currentUser: any, page = 1, limit =
 
 export const getSoporteRecurrenteById = async (id: number) => {
   const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT sr.*, e.nombre as empresa_nombre, u.nombre_completo as creador_nombre 
+    `SELECT sr.*, e.nombre as empresa_nombre, u.nombre_completo as creador_nombre, u_tech.nombre_completo as tecnico_nombre
      FROM soporte_recurrente sr 
      LEFT JOIN empresa e ON sr.empresa_id = e.id 
      LEFT JOIN usuario u ON sr.creador_id = u.id 
+     LEFT JOIN usuario u_tech ON sr.tecnico_id = u_tech.id
      WHERE sr.id = ?`,
     [id]
   );
@@ -102,18 +112,19 @@ export const createSoporteRecurrente = async (data: Omit<SoporteRecurrente, 'id'
   const fmtInicio = data.fecha_inicio.split('T')[0];
   const fmtSiguiente = siguienteEjecucion.toISOString().split('T')[0];
   const creadorId = currentUser?.id || (data as any).creador_id || null;
+  const tecnicoId = (data as any).tecnico_id || null;
 
   const [result] = await pool.query<ResultSetHeader>(
     `INSERT INTO soporte_recurrente 
       (titulo, descripcion, categoria, empresa_id, area_solicitante, persona_solicitante, 
-       prioridad, frecuencia, fecha_inicio, siguiente_ejecucion, is_active, creador_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       prioridad, frecuencia, fecha_inicio, siguiente_ejecucion, is_active, creador_id, tecnico_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.titulo, data.descripcion, data.categoria, data.empresa_id || null,
       data.area_solicitante || null, data.persona_solicitante || null,
       data.prioridad || 'Media', data.frecuencia, fmtInicio, fmtSiguiente,
       data.is_active !== undefined ? data.is_active : true,
-      creadorId
+      creadorId, tecnicoId
     ]
   );
 
@@ -135,7 +146,7 @@ export const updateSoporteRecurrente = async (id: number, data: Partial<SoporteR
   const allowedFields: (keyof SoporteRecurrente)[] = [
     'titulo', 'descripcion', 'categoria', 'empresa_id', 
     'area_solicitante', 'persona_solicitante', 'prioridad', 
-    'frecuencia', 'fecha_inicio', 'is_active'
+    'frecuencia', 'fecha_inicio', 'is_active', 'tecnico_id'
   ];
 
   for (const field of allowedFields) {
@@ -236,7 +247,8 @@ export const processRecurrentSupports = async () => {
       medio_solicitud: 'Automático (Recurrente)',
       prioridad: item.prioridad,
       estado: 'Nuevo',
-      nivel_soporte: 'N1'
+      nivel_soporte: item.tecnico_id ? 'N2' : 'N1',
+      tecnico_id: item.tecnico_id || null
     };
 
     try {

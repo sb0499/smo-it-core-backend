@@ -233,7 +233,7 @@ export const recalcularAvanceYEstados = async (proyectoId: number, usuarioId: nu
 };
 
 // --- SERVICIOS DE PROYECTO ---
-export const getProyectos = async (currentUser: any, page?: number, limit?: number, search = '') => {
+export const getProyectos = async (currentUser: any, page?: number, limit?: number, search = '', tecnicoId?: number | string) => {
   let whereClauses: string[] = [];
   const params: any[] = [];
 
@@ -244,18 +244,28 @@ export const getProyectos = async (currentUser: any, page?: number, limit?: numb
     params.push(wildcard, wildcard, wildcard);
   }
 
-  // Role filters
+  // Role & Technician filters
   let joinSql = '';
-  if (currentUser.rol_nombre === 'TECNICO') {
+  const isFilterTech = tecnicoId && Number(tecnicoId) > 0;
+  if (currentUser.rol_nombre === 'TECNICO' || isFilterTech) {
     joinSql = `
       LEFT JOIN tarea_proyecto tp ON tp.proyecto_id = p.id
       LEFT JOIN subtarea_proyecto sp ON sp.tarea_id = tp.id
     `;
+  }
+
+  if (currentUser.rol_nombre === 'TECNICO') {
     whereClauses.push(`(p.creador_id = ? OR tp.responsable_id = ? OR sp.responsable_id = ?)`);
     params.push(currentUser.id, currentUser.id, currentUser.id);
   } else if (currentUser.rol_nombre === 'USUARIO') {
     whereClauses.push(`(p.creador_id = ? OR t.creador_id = ?)`);
     params.push(currentUser.id, currentUser.id);
+  }
+
+  if (isFilterTech) {
+    const techIdNum = Number(tecnicoId);
+    whereClauses.push(`(p.creador_id = ? OR tp.responsable_id = ? OR sp.responsable_id = ? OR p.miembros LIKE ?)`);
+    params.push(techIdNum, techIdNum, techIdNum, `%${techIdNum}%`);
   }
 
   const whereStr = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';

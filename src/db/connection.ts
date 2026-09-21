@@ -567,7 +567,7 @@ async function initDbSchema() {
       }
     }
 
-    // Check and add creador_id column to soporte_recurrente
+    // Check and add creador_id & tecnico_id columns to soporte_recurrente
     const [colsRecurrencia] = await pool.query<any[]>(`SHOW COLUMNS FROM soporte_recurrente`);
     const recurrenciaColNames = colsRecurrencia.map((c: any) => c.Field);
     if (!recurrenciaColNames.includes('creador_id')) {
@@ -577,6 +577,15 @@ async function initDbSchema() {
         await pool.query(`ALTER TABLE soporte_recurrente ADD CONSTRAINT fk_soporte_recurrente_creador FOREIGN KEY (creador_id) REFERENCES usuario(id) ON DELETE SET NULL`);
       } catch (err: any) {
         console.log('Constraint fk_soporte_recurrente_creador already exists or error:', err.message);
+      }
+    }
+    if (!recurrenciaColNames.includes('tecnico_id')) {
+      console.log('Adding tecnico_id column to soporte_recurrente table...');
+      await pool.query(`ALTER TABLE soporte_recurrente ADD COLUMN tecnico_id INT NULL`);
+      try {
+        await pool.query(`ALTER TABLE soporte_recurrente ADD CONSTRAINT fk_soporte_recurrente_tecnico FOREIGN KEY (tecnico_id) REFERENCES usuario(id) ON DELETE SET NULL`);
+      } catch (err: any) {
+        console.log('Constraint fk_soporte_recurrente_tecnico note:', err.message);
       }
     }
 

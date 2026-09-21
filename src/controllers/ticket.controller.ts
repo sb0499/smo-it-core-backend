@@ -102,8 +102,9 @@ export const getTicketsPaginated = async (req: AuthRequest, res: Response): Prom
     const excludeStatus = req.query.excludeStatus as string;
     const estado = req.query.estado as string;
     const search = req.query.search as string;
+    const tecnicoId = (req.query.tecnico_id as string) || (req.query.tecnicoId as string);
 
-    const result = await ticketService.getTicketsPaginated(req.currentUser, page, limit, excludeStatus, estado, search);
+    const result = await ticketService.getTicketsPaginated(req.currentUser, page, limit, excludeStatus, estado, search, tecnicoId);
     res.json(result);
   } catch (error: any) {
     console.error('Error in getTicketsPaginated:', error);
