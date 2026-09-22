@@ -650,8 +650,8 @@ async function initDbSchema() {
       await pool.query(`
         UPDATE proyecto
         SET miembros = CASE 
-          WHEN miembros IS NULL OR miembros = '' OR miembros = '[]' THEN JSON_ARRAY(creador_id)
-          WHEN NOT JSON_CONTAINS(miembros, CAST(creador_id AS JSON)) THEN JSON_ARRAY_APPEND(miembros, '$', creador_id)
+          WHEN miembros IS NULL OR miembros = '' OR miembros = '[]' THEN CONCAT('[', creador_id, ']')
+          WHEN miembros NOT LIKE CONCAT('%', creador_id, '%') THEN CONCAT('[', TRIM(BOTH '[]' FROM miembros), ',', creador_id, ']')
           ELSE miembros
         END
         WHERE creador_id IS NOT NULL
