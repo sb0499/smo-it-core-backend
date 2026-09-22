@@ -81,7 +81,7 @@ export const notificarUsuario = async (usuarioId: number, titulo: string, mensaj
 };
 
 // --- RECALCULO DE PORCENTAJES Y CASACADA ---
-export const recalcularAvanceYEstados = async (proyectoId: number, usuarioId: number) => {
+export const recalcularAvanceYEstados = async (proyectoId: number, usuarioId: number, estadoAnteriorOverride?: string) => {
   // 1. Obtener todas las tareas del proyecto
   const [tareas] = await pool.query<RowDataPacket[]>(
     `SELECT * FROM tarea_proyecto WHERE proyecto_id = ?`,
@@ -121,113 +121,130 @@ export const recalcularAvanceYEstados = async (proyectoId: number, usuarioId: nu
     }
   }
 
-  // 2. Recalcular Proyecto basado en promedio de tareas
+  // 2. Recalcular Proyecto basado en promedio de tareas o en su propio estado si no posee tareas
+  const [projRow] = await pool.query<RowDataPacket[]>(`SELECT * FROM proyecto WHERE id = ?`, [proyectoId]);
+  if (projRow.length === 0) return;
+  const projActual = projRow[0];
+
+  const estadoAntes = estadoAnteriorOverride !== undefined ? estadoAnteriorOverride : projActual.estado;
+
   const [tareasActualizadas] = await pool.query<RowDataPacket[]>(
     `SELECT * FROM tarea_proyecto WHERE proyecto_id = ?`,
     [proyectoId]
   );
 
+  let promedioProj = projActual.avance_porcentaje;
+  let nuevoEstadoProj = projActual.estado;
+
   if (tareasActualizadas.length > 0) {
     const totalAvanceProj = tareasActualizadas.reduce((acc, t) => acc + t.avance_porcentaje, 0);
-    const promedioProj = Math.round(totalAvanceProj / tareasActualizadas.length);
+    promedioProj = Math.round(totalAvanceProj / tareasActualizadas.length);
     const todasTareasFinalizadas = tareasActualizadas.every((t) => t.estado === 'Finalizado');
     
-    // Obtener estado anterior del proyecto
-    const [projRow] = await pool.query<RowDataPacket[]>(`SELECT * FROM proyecto WHERE id = ?`, [proyectoId]);
-    const projAnterior = projRow[0];
-
-    let nuevoEstadoProj = projAnterior.estado;
     if (todasTareasFinalizadas) {
       nuevoEstadoProj = 'Finalizado';
+      promedioProj = 100;
     } else {
       nuevoEstadoProj = promedioProj === 0 ? 'Sin Iniciar' : 'En Proceso';
     }
+  } else {
+    // Si NO tiene tareas:
+    if (projActual.estado === 'Finalizado') {
+      promedioProj = 100;
+      nuevoEstadoProj = 'Finalizado';
+    } else if (projActual.estado === 'Sin Iniciar') {
+      promedioProj = 0;
+    }
+  }
 
-    if (projAnterior.avance_porcentaje !== promedioProj || projAnterior.estado !== nuevoEstadoProj) {
-      await pool.query(
-        `UPDATE proyecto SET avance_porcentaje = ?, estado = ? WHERE id = ?`,
-        [promedioProj, nuevoEstadoProj, proyectoId]
+  // Garantizar que si el estado es Finalizado, el avance sea 100%
+  if (nuevoEstadoProj === 'Finalizado') {
+    promedioProj = 100;
+  }
+
+  if (projActual.avance_porcentaje !== promedioProj || projActual.estado !== nuevoEstadoProj) {
+    await pool.query(
+      `UPDATE proyecto SET avance_porcentaje = ?, estado = ? WHERE id = ?`,
+      [promedioProj, nuevoEstadoProj, proyectoId]
+    );
+    await logProyectoHistorial(
+      proyectoId,
+      usuarioId,
+      `Sistema recalculó Proyecto: Avance ${promedioProj}%, Estado "${nuevoEstadoProj}"`
+    );
+  }
+
+  // Si pasa a Finalizado y antes no lo estaba, disparar correos, notificaciones y cierre del ticket origen
+  if (nuevoEstadoProj === 'Finalizado' && estadoAntes !== 'Finalizado') {
+    const [creadorRow] = await pool.query<RowDataPacket[]>(
+      `SELECT id, email, nombre_completo FROM usuario WHERE id = ?`,
+      [projActual.creador_id]
+    );
+    const creador = creadorRow[0];
+
+    // Obtener correos de los técnicos involucrados
+    const [techRows] = await pool.query<RowDataPacket[]>(
+      `SELECT DISTINCT u.id, u.email, u.nombre_completo 
+       FROM tarea_proyecto t
+       JOIN usuario u ON t.responsable_id = u.id
+       WHERE t.proyecto_id = ?`,
+      [proyectoId]
+    );
+
+    const destinatarios = [creador?.email, ...techRows.map((t) => t.email)].filter(Boolean) as string[];
+
+    for (const dest of destinatarios) {
+      await enviarCorreo(
+        dest,
+        `Proyecto Finalizado: ${projActual.nombre}`,
+        `Hola,\n\nNos complace informarte que el proyecto "${projActual.nombre}" ha sido finalizado con éxito (100% de avance).\n\nCreador del Proyecto: ${creador?.nombre_completo || 'Sistema'}\nFecha de Finalización: ${new Date().toLocaleString()}\n\nSaludos,\nSistema TISMO`
+      ).catch(console.error);
+    }
+
+    // Si el proyecto proviene de un ticket de soporte (ticket_origen_id), finalizar el ticket automáticamente
+    if (projActual.ticket_origen_id) {
+      const [tRows] = await pool.query<RowDataPacket[]>(
+        `SELECT id, bitacora_dinamica, creador_id, titulo FROM ticket WHERE id = ?`,
+        [projActual.ticket_origen_id]
       );
-      await logProyectoHistorial(
-        proyectoId,
-        usuarioId,
-        `Sistema recalculó Proyecto: Avance ${promedioProj}%, Estado "${nuevoEstadoProj}"`
-      );
+      if (tRows.length > 0) {
+        const ticketOrigen = tRows[0];
+        let ticketBitacora = [];
+        try {
+          ticketBitacora = typeof ticketOrigen.bitacora_dinamica === 'string'
+            ? JSON.parse(ticketOrigen.bitacora_dinamica)
+            : ticketOrigen.bitacora_dinamica || [];
+        } catch (e) {
+          ticketBitacora = [];
+        }
 
-      // Si pasa a Finalizado y antes no lo estaba, disparar el correo de confirmación de fin
-      if (nuevoEstadoProj === 'Finalizado' && projAnterior.estado !== 'Finalizado') {
-        const [creadorRow] = await pool.query<RowDataPacket[]>(
-          `SELECT id, email, nombre_completo FROM usuario WHERE id = ?`,
-          [projAnterior.creador_id]
+        ticketBitacora.push({
+          accion: `Ticket finalizado automáticamente al completarse el Proyecto #${proyectoId} ("${projActual.nombre}").`,
+          fecha: new Date().toISOString(),
+          usuario: 'Sistema Automático'
+        });
+
+        await pool.query(
+          `UPDATE ticket SET estado = 'Finalizada', bitacora_dinamica = ?, updated_at = NOW() WHERE id = ?`,
+          [JSON.stringify(ticketBitacora), ticketOrigen.id]
         );
-        const creador = creadorRow[0];
 
-        // Obtener correos de los técnicos involucrados
-        const [techRows] = await pool.query<RowDataPacket[]>(
-          `SELECT DISTINCT u.id, u.email, u.nombre_completo 
-           FROM tarea_proyecto t
-           JOIN usuario u ON t.responsable_id = u.id
-           WHERE t.proyecto_id = ?`,
-          [proyectoId]
-        );
-
-        const destinatarios = [creador?.email, ...techRows.map((t) => t.email)].filter(Boolean) as string[];
-
-        for (const dest of destinatarios) {
-          await enviarCorreo(
-            dest,
-            `Proyecto Finalizado: ${projAnterior.nombre}`,
-            `Hola,\n\nNos complace informarte que el proyecto "${projAnterior.nombre}" ha sido finalizado con éxito (100% de avance en todas sus tareas y subtareas).\n\nCreador del Proyecto: ${creador?.nombre_completo || 'Sistema'}\nFecha de Finalización: ${new Date().toLocaleString()}\n\nSaludos,\nSistema TISMO`
-          ).catch(console.error);
-        }
-
-        // Si el proyecto proviene de un ticket de soporte (ticket_origen_id), finalizar el ticket automáticamente
-        if (projAnterior.ticket_origen_id) {
-          const [tRows] = await pool.query<RowDataPacket[]>(
-            `SELECT id, bitacora_dinamica, creador_id, titulo FROM ticket WHERE id = ?`,
-            [projAnterior.ticket_origen_id]
-          );
-          if (tRows.length > 0) {
-            const ticketOrigen = tRows[0];
-            let ticketBitacora = [];
-            try {
-              ticketBitacora = typeof ticketOrigen.bitacora_dinamica === 'string'
-                ? JSON.parse(ticketOrigen.bitacora_dinamica)
-                : ticketOrigen.bitacora_dinamica || [];
-            } catch (e) {
-              ticketBitacora = [];
-            }
-
-            ticketBitacora.push({
-              accion: `Ticket finalizado automáticamente al completarse el Proyecto #${proyectoId} ("${projAnterior.nombre}").`,
-              fecha: new Date().toISOString(),
-              usuario: 'Sistema Automático'
-            });
-
-            await pool.query(
-              `UPDATE ticket SET estado = 'Finalizada', bitacora_dinamica = ?, updated_at = NOW() WHERE id = ?`,
-              [JSON.stringify(ticketBitacora), ticketOrigen.id]
-            );
-
-            crearNotificacion(
-              ticketOrigen.creador_id,
-              `Ticket Solucionado por Proyecto #${proyectoId}`,
-              `Tu ticket "${ticketOrigen.titulo}" fue finalizado automáticamente al completarse el proyecto asociado.`
-            ).catch(console.error);
-          }
-        }
-
-        // Notify creator and assigned technicians internally
-        const userIdsToNotify = [creador?.id, ...techRows.map((t) => t.id)].filter(Boolean) as number[];
-        for (const uId of userIdsToNotify) {
-          await crearNotificacion(
-            uId,
-            `Proyecto Finalizado: ${projAnterior.nombre}`,
-            `El proyecto "${projAnterior.nombre}" ha sido finalizado con éxito (100% de avance).`
-          ).catch(console.error);
-        }
+        crearNotificacion(
+          ticketOrigen.creador_id,
+          `Ticket Solucionado por Proyecto #${proyectoId}`,
+          `Tu ticket "${ticketOrigen.titulo}" fue finalizado automáticamente al completarse el proyecto asociado.`
+        ).catch(console.error);
       }
+    }
 
+    // Notify creator and assigned technicians internally
+    const userIdsToNotify = [creador?.id, ...techRows.map((t) => t.id)].filter(Boolean) as number[];
+    for (const uId of userIdsToNotify) {
+      await crearNotificacion(
+        uId,
+        `Proyecto Finalizado: ${projActual.nombre}`,
+        `El proyecto "${projActual.nombre}" ha sido finalizado con éxito (100% de avance).`
+      ).catch(console.error);
     }
   }
 };
@@ -255,8 +272,8 @@ export const getProyectos = async (currentUser: any, page?: number, limit?: numb
   }
 
   if (currentUser.rol_nombre === 'TECNICO') {
-    whereClauses.push(`(p.creador_id = ? OR tp.responsable_id = ? OR sp.responsable_id = ?)`);
-    params.push(currentUser.id, currentUser.id, currentUser.id);
+    whereClauses.push(`(p.creador_id = ? OR tp.responsable_id = ? OR sp.responsable_id = ? OR p.miembros LIKE ? OR p.miembros LIKE ?)`);
+    params.push(currentUser.id, currentUser.id, currentUser.id, `%"${currentUser.id}"%`, `%${currentUser.id}%`);
   } else if (currentUser.rol_nombre === 'USUARIO') {
     whereClauses.push(`(p.creador_id = ? OR t.creador_id = ?)`);
     params.push(currentUser.id, currentUser.id);
@@ -264,8 +281,8 @@ export const getProyectos = async (currentUser: any, page?: number, limit?: numb
 
   if (isFilterTech) {
     const techIdNum = Number(tecnicoId);
-    whereClauses.push(`(p.creador_id = ? OR tp.responsable_id = ? OR sp.responsable_id = ? OR p.miembros LIKE ?)`);
-    params.push(techIdNum, techIdNum, techIdNum, `%${techIdNum}%`);
+    whereClauses.push(`(p.creador_id = ? OR tp.responsable_id = ? OR sp.responsable_id = ? OR p.miembros LIKE ? OR p.miembros LIKE ?)`);
+    params.push(techIdNum, techIdNum, techIdNum, `%"${techIdNum}"%`, `%${techIdNum}%`);
   }
 
   const whereStr = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
@@ -344,7 +361,16 @@ export const getProyectoById = async (id: number, currentUser: any) => {
        WHERE tp.proyecto_id = ? AND sp.responsable_id = ?`,
       [id, currentUser.id]
     );
-    if (proyecto.creador_id !== currentUser.id && tasks.length === 0 && subtasks.length === 0) {
+
+    let isMember = false;
+    if (proyecto.miembros) {
+      try {
+        const mArr = typeof proyecto.miembros === 'string' ? JSON.parse(proyecto.miembros) : proyecto.miembros;
+        isMember = Array.isArray(mArr) && mArr.includes(currentUser.id);
+      } catch {}
+    }
+
+    if (proyecto.creador_id !== currentUser.id && tasks.length === 0 && subtasks.length === 0 && !isMember) {
       throw new Error('403: No tienes permisos para ver este proyecto.');
     }
   } else if (currentUser.rol_nombre === 'USUARIO') {
@@ -451,10 +477,28 @@ export const getProyectoById = async (id: number, currentUser: any) => {
 
 export const createProyecto = async (data: { nombre: string; descripcion?: string; fecha_fin_estimada: string; tipo_proyecto?: string; ticket_origen_id?: number; miembros?: string }, currentUser: any) => {
   const formattedFechaFin = formatMySQLDateTime(data.fecha_fin_estimada);
+
+  let miembrosArray: number[] = [];
+  if (data.miembros) {
+    try {
+      miembrosArray = typeof data.miembros === 'string' ? JSON.parse(data.miembros) : data.miembros;
+      if (!Array.isArray(miembrosArray)) miembrosArray = [];
+    } catch {
+      miembrosArray = [];
+    }
+  }
+
+  // Asegurar que el creador del proyecto esté siempre incluido en el equipo (miembros)
+  if (currentUser?.id && !miembrosArray.includes(currentUser.id)) {
+    miembrosArray.push(currentUser.id);
+  }
+
+  const miembrosJson = JSON.stringify(miembrosArray);
+
   const [result] = await pool.query<ResultSetHeader>(
     `INSERT INTO proyecto (nombre, descripcion, fecha_fin_estimada, estado, tipo_proyecto, creador_id, ticket_origen_id, miembros)
      VALUES (?, ?, ?, 'Sin Iniciar', ?, ?, ?, ?)`,
-    [data.nombre, data.descripcion || null, formattedFechaFin, data.tipo_proyecto || 'Otro', currentUser.id, data.ticket_origen_id || null, data.miembros || null]
+    [data.nombre, data.descripcion || null, formattedFechaFin, data.tipo_proyecto || 'Otro', currentUser.id, data.ticket_origen_id || null, miembrosJson]
   );
 
   const proyectoId = result.insertId;
@@ -465,18 +509,15 @@ export const createProyecto = async (data: { nombre: string; descripcion?: strin
   );
 
   // Notificar a los miembros asignados
-  if (data.miembros) {
+  if (miembrosArray.length > 0) {
     try {
-      const ids = typeof data.miembros === 'string' ? JSON.parse(data.miembros) : data.miembros;
-      if (Array.isArray(ids)) {
-        for (const mId of ids) {
-          if (mId !== currentUser.id) {
-            await notificarUsuario(
-              mId,
-              `Nuevo Proyecto Asignado: ${data.nombre}`,
-              `Has sido asignado como miembro en el proyecto "${data.nombre}". Creado por ${currentUser.nombre_completo}. Fecha fin estimada: ${data.fecha_fin_estimada}.`
-            );
-          }
+      for (const mId of miembrosArray) {
+        if (mId !== currentUser.id) {
+          await notificarUsuario(
+            mId,
+            `Nuevo Proyecto Asignado: ${data.nombre}`,
+            `Has sido asignado como miembro en el proyecto "${data.nombre}". Creado por ${currentUser.nombre_completo}. Fecha fin estimada: ${data.fecha_fin_estimada}.`
+          );
         }
       }
     } catch (e) {
@@ -505,11 +546,29 @@ export const updateProyecto = async (id: number, data: { nombre?: string; descri
   const fechaFin = data.fecha_fin_estimada !== undefined ? formatMySQLDateTime(data.fecha_fin_estimada) : proj.fecha_fin_estimada;
   const estado = data.estado !== undefined ? data.estado : proj.estado;
   const tipo = data.tipo_proyecto !== undefined ? data.tipo_proyecto : proj.tipo_proyecto;
-  const miembros = data.miembros !== undefined ? data.miembros : proj.miembros;
+  let miembros = data.miembros !== undefined ? data.miembros : proj.miembros;
+
+  if (miembros) {
+    try {
+      let mArr = typeof miembros === 'string' ? JSON.parse(miembros) : miembros;
+      if (Array.isArray(mArr)) {
+        if (proj.creador_id && !mArr.includes(proj.creador_id)) {
+          mArr.push(proj.creador_id);
+        }
+        miembros = JSON.stringify(mArr);
+      }
+    } catch {}
+  }
+
+  let avancePorcentaje = proj.avance_porcentaje;
+
+  if (estado === 'Finalizado') {
+    avancePorcentaje = 100;
+  }
 
   await pool.query(
-    `UPDATE proyecto SET nombre = ?, descripcion = ?, fecha_fin_estimada = ?, estado = ?, tipo_proyecto = ?, miembros = ? WHERE id = ?`,
-    [nombre, descripcion, fechaFin, estado, tipo, miembros, id]
+    `UPDATE proyecto SET nombre = ?, descripcion = ?, fecha_fin_estimada = ?, estado = ?, tipo_proyecto = ?, miembros = ?, avance_porcentaje = ? WHERE id = ?`,
+    [nombre, descripcion, fechaFin, estado, tipo, miembros, avancePorcentaje, id]
   );
 
   let msg = `El usuario ${currentUser.nombre_completo} actualizó datos del proyecto:`;
@@ -517,7 +576,7 @@ export const updateProyecto = async (id: number, data: { nombre?: string; descri
   if (data.fecha_fin_estimada && data.fecha_fin_estimada !== proj.fecha_fin_estimada) msg += ` Cambió fecha de fin a ${data.fecha_fin_estimada}.`;
   
   await logProyectoHistorial(id, currentUser.id, msg);
-  await recalcularAvanceYEstados(id, currentUser.id);
+  await recalcularAvanceYEstados(id, currentUser.id, proj.estado);
 
   // Notificar nuevos miembros agregados
   if (data.miembros && data.miembros !== proj.miembros) {

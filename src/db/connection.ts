@@ -638,6 +638,28 @@ async function initDbSchema() {
       console.log('Note on backfill tecnico_n1_id:', err.message);
     }
 
+    // Auto-corregir avance en proyectos en estado Finalizado
+    try {
+      await pool.query(`UPDATE proyecto SET avance_porcentaje = 100 WHERE estado = 'Finalizado' AND avance_porcentaje < 100`);
+    } catch (err: any) {
+      console.log('Note on backfill proyecto avance:', err.message);
+    }
+
+    // Auto-corregir miembros de proyectos para incluir creador_id
+    try {
+      await pool.query(`
+        UPDATE proyecto
+        SET miembros = CASE 
+          WHEN miembros IS NULL OR miembros = '' OR miembros = '[]' THEN JSON_ARRAY(creador_id)
+          WHEN NOT JSON_CONTAINS(miembros, CAST(creador_id AS JSON)) THEN JSON_ARRAY_APPEND(miembros, '$', creador_id)
+          ELSE miembros
+        END
+        WHERE creador_id IS NOT NULL
+      `);
+    } catch (err: any) {
+      console.log('Note on backfill proyecto miembros:', err.message);
+    }
+
     // Create base_conocimiento table if not exists
     console.log('Checking/creating base_conocimiento table...');
     await pool.query(`
