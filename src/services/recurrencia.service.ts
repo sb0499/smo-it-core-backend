@@ -112,7 +112,12 @@ export const createSoporteRecurrente = async (data: Omit<SoporteRecurrente, 'id'
   const fmtInicio = data.fecha_inicio.split('T')[0];
   const fmtSiguiente = siguienteEjecucion.toISOString().split('T')[0];
   const creadorId = currentUser?.id || (data as any).creador_id || null;
-  const tecnicoId = (data as any).tecnico_id || null;
+  let tecnicoId = (data as any).tecnico_id || null;
+
+  // Si quien crea es un técnico (no ADMIN ni SUPERVISOR), la recurrencia se asigna automáticamente a sí mismo
+  if (currentUser && !isManagerOrAdmin(currentUser)) {
+    tecnicoId = currentUser.id;
+  }
 
   const [result] = await pool.query<ResultSetHeader>(
     `INSERT INTO soporte_recurrente 
@@ -138,6 +143,11 @@ export const updateSoporteRecurrente = async (id: number, data: Partial<SoporteR
   // Permission check: Only ADMIN, SUPERVISOR, or the creator can update
   if (currentUser && !isManagerOrAdmin(currentUser) && existing.creador_id !== currentUser.id) {
     return null;
+  }
+
+  // Si quien actualiza es TECNICO (no ADMIN ni SUPERVISOR), forzar asignación a sí mismo
+  if (currentUser && !isManagerOrAdmin(currentUser)) {
+    data.tecnico_id = currentUser.id;
   }
 
   const sets: string[] = [];

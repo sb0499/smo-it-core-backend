@@ -79,17 +79,37 @@ export const createTicket = async (data: any, currentUser: any) => {
       : (diaSemana >= 1 && diaSemana <= 5);
 
     if (esDiaTrabajo) {
-      // 1. Prioridad: Técnico de Sucursal específica si existe y está activo
+      // 1. Prioridad: Técnico N1 de Sucursal específica si existe y está activo (buscando en sucursal.usuario_id y usuario_sucursal)
       if (data.sucursal_id) {
-        const [sucRows] = await pool.query<RowDataPacket[]>(
-          `SELECT s.usuario_id 
-           FROM sucursal s
-           JOIN usuario u ON s.usuario_id = u.id
-           WHERE s.id = ? AND u.is_active = 1`,
-          [data.sucursal_id]
+        const techNivelFilter = isSpecialCompany ? '' : "AND u.nivel_soporte = 'N1'";
+        const [sucTechRows] = await pool.query<RowDataPacket[]>(
+          `SELECT DISTINCT u.id 
+           FROM usuario u
+           JOIN rol r ON u.rol_id = r.id
+           LEFT JOIN sucursal s ON s.usuario_id = u.id AND s.id = ?
+           LEFT JOIN usuario_sucursal us ON us.usuario_id = u.id AND us.sucursal_id = ?
+           WHERE (s.id IS NOT NULL OR us.sucursal_id IS NOT NULL)
+             AND u.is_active = 1
+             AND r.nombre IN ('TECNICO', 'SUPERVISOR') ${techNivelFilter}`,
+          [data.sucursal_id, data.sucursal_id]
         );
-        if (sucRows.length > 0 && sucRows[0].usuario_id) {
-          tecnicoAsignado = sucRows[0].usuario_id;
+
+        if (sucTechRows.length === 1) {
+          tecnicoAsignado = sucTechRows[0].id;
+        } else if (sucTechRows.length > 1) {
+          // Si hay más de un técnico asignado a esa sucursal, balancear entre ellos
+          const techIds = sucTechRows.map(t => t.id);
+          const [balanceoSucursal] = await pool.query<RowDataPacket[]>(
+            `SELECT u.id, COUNT(t.id) as total_tickets
+             FROM usuario u
+             LEFT JOIN ticket t ON u.id = t.tecnico_id AND t.estado IN ('Nuevo', 'Pendiente')
+             WHERE u.id IN (?)
+             GROUP BY u.id
+             ORDER BY total_tickets ASC
+             LIMIT 1`,
+            [techIds]
+          );
+          if (balanceoSucursal.length > 0) tecnicoAsignado = balanceoSucursal[0].id;
         }
       }
 
@@ -107,17 +127,21 @@ export const createTicket = async (data: any, currentUser: any) => {
         }
       }
 
-      // 3. Si no hay técnico principal asignado, balancear entre los técnicos N1 de esa sede/empresa
+      // 3. Si no hay técnico principal asignado, balancear entre los técnicos N1 de esa sede/empresa (empresa o sus sucursales)
       if (!tecnicoAsignado && data.empresa_id) {
         // En empresas especiales no se toma en cuenta si son N1 o N2
         const techNivelFilter = isSpecialCompany ? '' : "AND u.nivel_soporte = 'N1'";
         const [techRows] = await pool.query<RowDataPacket[]>(
-          `SELECT u.id 
+          `SELECT DISTINCT u.id 
            FROM usuario u
-           JOIN usuario_empresa ue ON u.id = ue.usuario_id
            JOIN rol r ON u.rol_id = r.id
-           WHERE ue.empresa_id = ? AND r.nombre IN ('TECNICO', 'SUPERVISOR') ${techNivelFilter} AND u.is_active = 1`,
-          [data.empresa_id]
+           LEFT JOIN usuario_empresa ue ON u.id = ue.usuario_id AND ue.empresa_id = ?
+           LEFT JOIN usuario_sucursal us ON u.id = us.usuario_id
+           LEFT JOIN sucursal s ON (us.sucursal_id = s.id OR s.usuario_id = u.id) AND s.empresa_id = ?
+           WHERE (ue.empresa_id IS NOT NULL OR s.empresa_id IS NOT NULL)
+             AND r.nombre IN ('TECNICO', 'SUPERVISOR') ${techNivelFilter} 
+             AND u.is_active = 1`,
+          [data.empresa_id, data.empresa_id]
         );
         if (techRows.length > 0) {
           if (techRows.length === 1) {
@@ -158,11 +182,18 @@ export const createTicket = async (data: any, currentUser: any) => {
     } else {
       // Fines de semana / días libres y Feriados
       const fechaHoy = ahora.toISOString().split('T')[0];
-      const [guardiaRows] = await pool.query<RowDataPacket[]>(
-        `SELECT tecnico_id FROM guardia_feriado WHERE fecha = ?`,
-        [fechaHoy]
-      );
-      if (guardiaRows.length > 0) {
+      const paramsGuardia: any[] = [fechaHoy];
+      let sqlGuardia = `SELECT tecnico_id FROM guardia_feriado WHERE fecha = ? AND tecnico_id IS NOT NULL`;
+      
+      if (data.empresa_id) {
+        sqlGuardia += ` AND (empresa_id = ? OR empresa_id IS NULL) ORDER BY empresa_id DESC LIMIT 1`;
+        paramsGuardia.push(data.empresa_id);
+      } else {
+        sqlGuardia += ` LIMIT 1`;
+      }
+
+      const [guardiaRows] = await pool.query<RowDataPacket[]>(sqlGuardia, paramsGuardia);
+      if (guardiaRows.length > 0 && guardiaRows[0].tecnico_id) {
         tecnicoAsignado = guardiaRows[0].tecnico_id;
       }
 
