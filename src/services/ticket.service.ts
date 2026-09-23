@@ -45,9 +45,11 @@ export const createTicket = async (data: any, currentUser: any) => {
   const ahora = new Date();
   const diaSemana = ahora.getDay(); // 0=Dom, 6=Sab
 
-  if (currentUser.rol_nombre === 'TECNICO') {
+  if ((currentUser.rol_nombre === 'ADMIN' || currentUser.rol_nombre === 'SUPERVISOR') && data.tecnico_id) {
+    tecnicoAsignado = data.tecnico_id;
+  } else if (currentUser.rol_nombre === 'TECNICO' || currentUser.rol_nombre === 'SUPERVISOR' || currentUser.rol_nombre === 'ADMIN') {
     let isAssignedToCompany = true;
-    if (data.empresa_id) {
+    if (data.empresa_id && currentUser.rol_nombre === 'TECNICO') {
       const [assignedRows] = await pool.query<RowDataPacket[]>(
         `SELECT 1 FROM usuario_empresa WHERE usuario_id = ? AND empresa_id = ?`,
         [currentUser.id, data.empresa_id]
@@ -58,8 +60,6 @@ export const createTicket = async (data: any, currentUser: any) => {
     if (isAssignedToCompany && !(currentUser.nivel_soporte === 'N2' && data.nivel_soporte !== 'N2')) {
       tecnicoAsignado = currentUser.id;
     }
-  } else if ((currentUser.rol_nombre === 'ADMIN' || currentUser.rol_nombre === 'SUPERVISOR') && data.tecnico_id) {
-    tecnicoAsignado = data.tecnico_id;
   } else {
     // Verificar si es una sede con calendario especial (Gametown, El Teatro, Apparca)
     let isSpecialCompany = false;

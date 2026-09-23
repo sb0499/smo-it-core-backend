@@ -54,36 +54,124 @@ export const getHostingDominios = async (
   currentUser: any,
   tipo?: string,
   empresaId?: number,
-  search?: string
+  search?: string,
+  page?: number,
+  limit?: number
 ) => {
   await ensureTableExists();
-  const whereClauses: string[] = ['hd.is_active = 1'];
-  const params: any[] = [];
+
+  const baseWhereClauses: string[] = ['hd.is_active = 1'];
+  const baseParams: any[] = [];
+
+  if (empresaId) {
+    baseWhereClauses.push('hd.empresa_id = ?');
+    baseParams.push(empresaId);
+  }
+
+  if (search) {
+    baseWhereClauses.push('(hd.nombre LIKE ? OR hd.detalle LIKE ? OR e.nombre LIKE ? OR p.nombre LIKE ?)');
+    const wildcard = `%${search}%`;
+    baseParams.push(wildcard, wildcard, wildcard, wildcard);
+  }
+
+  // Filter by company permissions (Sedes Soporte - usuario_empresa)
+  const userRole = currentUser?.rol || currentUser?.rol_nombre;
+  if (currentUser && userRole !== 'ADMIN') {
+    const [userEmpRows] = await pool.query<RowDataPacket[]>(
+      'SELECT 1 FROM usuario_empresa WHERE usuario_id = ? LIMIT 1',
+      [currentUser.id]
+    );
+    if (userEmpRows.length > 0) {
+      baseWhereClauses.push('(hd.empresa_id IS NULL OR hd.empresa_id IN (SELECT empresa_id FROM usuario_empresa WHERE usuario_id = ?))');
+      baseParams.push(currentUser.id);
+    }
+  }
+
+  // Calculate stats per tipo (HOSTING, DOMINIO, LICENCIA, SERVICIO, FIRMA)
+  const baseWhereStr = baseWhereClauses.length > 0 ? `WHERE ${baseWhereClauses.join(' AND ')}` : '';
+  const statsQuery = `
+    SELECT hd.tipo, COUNT(*) as count
+    FROM hosting_dominio hd
+    LEFT JOIN empresa e ON hd.empresa_id = e.id
+    LEFT JOIN proveedor p ON hd.proveedor_id = p.id
+    ${baseWhereStr}
+    GROUP BY hd.tipo
+  `;
+  const [statsRows] = await pool.query<RowDataPacket[]>(statsQuery, baseParams);
+
+  const stats = {
+    totalHostings: 0,
+    totalDominios: 0,
+    totalLicencias: 0,
+    totalServicios: 0,
+    totalFirmas: 0
+  };
+
+  for (const r of statsRows) {
+    if (r.tipo === 'HOSTING') stats.totalHostings = Number(r.count);
+    if (r.tipo === 'DOMINIO') stats.totalDominios = Number(r.count);
+    if (r.tipo === 'LICENCIA') stats.totalLicencias = Number(r.count);
+    if (r.tipo === 'SERVICIO') stats.totalServicios = Number(r.count);
+    if (r.tipo === 'FIRMA') stats.totalFirmas = Number(r.count);
+  }
+
+  // Where clauses including specific tipo if requested
+  const whereClauses = [...baseWhereClauses];
+  const params = [...baseParams];
 
   if (tipo) {
     whereClauses.push('hd.tipo = ?');
     params.push(tipo);
   }
 
-  if (empresaId) {
-    whereClauses.push('hd.empresa_id = ?');
-    params.push(empresaId);
-  }
-
-  if (search) {
-    whereClauses.push('(hd.nombre LIKE ? OR hd.detalle LIKE ? OR e.nombre LIKE ? OR p.nombre LIKE ?)');
-    const wildcard = `%${search}%`;
-    params.push(wildcard, wildcard, wildcard, wildcard);
-  }
-
-  // Filter by company permissions if TECNICO or restricted role
-  const userRole = currentUser?.rol || currentUser?.rol_nombre;
-  if (currentUser && userRole === 'TECNICO' && currentUser?.nivel_soporte === 'N1') {
-    whereClauses.push('(hd.empresa_id IS NULL OR hd.empresa_id IN (SELECT empresa_id FROM usuario_empresa_inventario WHERE usuario_id = ?))');
-    params.push(currentUser.id);
-  }
-
   const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+  if (page && limit) {
+    const skip = (page - 1) * limit;
+
+    const countQuery = `
+      SELECT COUNT(*) as count
+      FROM hosting_dominio hd
+      LEFT JOIN empresa e ON hd.empresa_id = e.id
+      LEFT JOIN proveedor p ON hd.proveedor_id = p.id
+      ${whereStr}
+    `;
+    const [countRows] = await pool.query<RowDataPacket[]>(countQuery, params);
+    const total = countRows[0]?.count || 0;
+
+    const dataQuery = `
+      SELECT 
+        hd.*,
+        e.nombre as empresa_nombre,
+        p.nombre as proveedor_nombre,
+        u.nombre_completo as creador_nombre,
+        DATEDIFF(hd.pagado_hasta, CURDATE()) as dias_restantes,
+        CASE 
+          WHEN DATEDIFF(hd.pagado_hasta, CURDATE()) < 0 THEN 'VENCIDO'
+          WHEN DATEDIFF(hd.pagado_hasta, CURDATE()) <= 60 THEN 'POR_VENCER'
+          ELSE 'VIGENTE'
+        END as estado_vencimiento
+      FROM hosting_dominio hd
+      LEFT JOIN empresa e ON hd.empresa_id = e.id
+      LEFT JOIN proveedor p ON hd.proveedor_id = p.id
+      LEFT JOIN usuario u ON hd.creador_id = u.id
+      ${whereStr}
+      ORDER BY 
+        CASE WHEN DATEDIFF(hd.pagado_hasta, CURDATE()) <= 60 THEN 0 ELSE 1 END,
+        hd.pagado_hasta ASC,
+        hd.nombre ASC
+      LIMIT ? OFFSET ?
+    `;
+
+    const [dataRows] = await pool.query<RowDataPacket[]>(dataQuery, [...params, limit, skip]);
+    return {
+      total,
+      page,
+      limit,
+      data: dataRows as HostingDominio[],
+      stats
+    };
+  }
 
   const query = `
     SELECT 
@@ -204,9 +292,11 @@ export const verificarExpiracionesHostingsDominios = async () => {
         hd.*,
         u.email as creador_email,
         u.nombre_completo as creador_nombre,
+        e.nombre as empresa_nombre,
         DATEDIFF(hd.pagado_hasta, CURDATE()) as dias_restantes
       FROM hosting_dominio hd
       LEFT JOIN usuario u ON hd.creador_id = u.id
+      LEFT JOIN empresa e ON hd.empresa_id = e.id
       WHERE hd.is_active = 1
         AND DATEDIFF(hd.pagado_hasta, CURDATE()) <= 60
         AND (hd.ultima_notificacion IS NULL OR hd.ultima_notificacion < CURDATE())
@@ -236,6 +326,7 @@ export const verificarExpiracionesHostingsDominios = async () => {
 
     for (const item of expiringItems) {
       const tipoLabel = tipoMap[item.tipo] || item.tipo;
+      const empresaLabel = item.empresa_nombre ? ` (${item.empresa_nombre})` : '';
       const diasMsg = item.dias_restantes < 0 
         ? `venció hace ${Math.abs(item.dias_restantes)} días` 
         : item.dias_restantes === 0 
@@ -243,13 +334,37 @@ export const verificarExpiracionesHostingsDominios = async () => {
           : `vencerá en ${item.dias_restantes} días (Fecha: ${item.pagado_hasta.toISOString ? item.pagado_hasta.toISOString().split('T')[0] : item.pagado_hasta})`;
 
       const titulo = `Alerta Pago de ${tipoLabel}: ${item.nombre}`;
-      const mensaje = `El servicio (${tipoLabel}) "${item.nombre}" ${diasMsg}. Por favor gestionar la renovación del pago.`;
+      const mensaje = `El servicio (${tipoLabel}) "${item.nombre}"${empresaLabel} ${diasMsg}. Por favor gestionar la renovación del pago.`;
 
       // Set to keep track of notified users to prevent duplicate notifications
       const notifiedUserIds = new Set<number>();
 
-      // 1. Notify creator
-      if (item.creador_id) {
+      // 1. Notify N1 Technician(s) of the Empresa
+      if (item.empresa_id) {
+        const [n1Techs] = await pool.query<RowDataPacket[]>(
+          `SELECT DISTINCT u.id, u.email, u.nombre_completo as nombre
+           FROM usuario u
+           LEFT JOIN empresa e ON e.tecnico_principal_id = u.id AND e.id = ?
+           LEFT JOIN usuario_empresa ue ON u.id = ue.usuario_id AND ue.empresa_id = ?
+           WHERE (e.id IS NOT NULL OR ue.empresa_id IS NOT NULL)
+             AND u.is_active = 1
+             AND u.nivel_soporte = 'N1'`,
+          [item.empresa_id, item.empresa_id]
+        );
+
+        for (const n1 of n1Techs) {
+          if (!notifiedUserIds.has(n1.id)) {
+            await crearNotificacion(n1.id, titulo, mensaje);
+            notifiedUserIds.add(n1.id);
+            if (n1.email) {
+              await enviarCorreo(n1.email, titulo, mensaje);
+            }
+          }
+        }
+      }
+
+      // 2. Notify creator
+      if (item.creador_id && !notifiedUserIds.has(item.creador_id)) {
         await crearNotificacion(item.creador_id, titulo, mensaje);
         notifiedUserIds.add(item.creador_id);
 
@@ -258,12 +373,12 @@ export const verificarExpiracionesHostingsDominios = async () => {
         }
       }
 
-      // 2. Notify Admins & Supervisors
+      // 3. Notify Admins & Supervisors
       for (const admin of adminUsers) {
         if (!notifiedUserIds.has(admin.id)) {
           await crearNotificacion(admin.id, titulo, mensaje);
           notifiedUserIds.add(admin.id);
-          if (admin.email && admin.email !== item.creador_email) {
+          if (admin.email) {
             await enviarCorreo(admin.email, titulo, mensaje);
           }
         }
@@ -274,7 +389,7 @@ export const verificarExpiracionesHostingsDominios = async () => {
         `UPDATE hosting_dominio SET ultima_notificacion = CURDATE() WHERE id = ?`,
         [item.id]
       );
-      console.log(`[Cron] Notificación enviada para ${item.tipo} #${item.id} ("${item.nombre}")`);
+      console.log(`[Cron] Notificación enviada para ${item.tipo} #${item.id} ("${item.nombre}") a ${notifiedUserIds.size} usuarios.`);
     }
   } catch (err) {
     console.error('[Cron] Error al verificar vencimientos de hostings y dominios:', err);

@@ -3,18 +3,25 @@ import * as hostingDominioService from '../services/hosting-dominio.service';
 
 export const getHostingDominiosController = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { tipo, empresa_id, search } = req.query;
+    const { tipo, empresa_id, search, page, limit } = req.query;
     const currentUser = (req as any).currentUser || (req as any).user;
 
-    const tipoFilter = tipo === 'HOSTING' || tipo === 'DOMINIO' ? tipo : undefined;
+    const validTipos = ['HOSTING', 'DOMINIO', 'LICENCIA', 'SERVICIO', 'FIRMA'];
+    const tipoFilter = tipo && validTipos.includes(String(tipo).toUpperCase()) 
+      ? String(tipo).toUpperCase() 
+      : undefined;
     const empresaIdFilter = empresa_id ? Number(empresa_id) : undefined;
     const searchFilter = search ? String(search) : undefined;
+    const pageNum = page ? parseInt(String(page), 10) : undefined;
+    const limitNum = limit ? parseInt(String(limit), 10) : undefined;
 
     const data = await hostingDominioService.getHostingDominios(
       currentUser,
       tipoFilter,
       empresaIdFilter,
-      searchFilter
+      searchFilter,
+      pageNum,
+      limitNum
     );
 
     res.json(data);
