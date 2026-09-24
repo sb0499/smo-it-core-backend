@@ -1,6 +1,7 @@
 import { pool } from '../db/connection';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { createTicket } from './ticket.service';
+import { getFechaHoyEcuador } from '../utils/date.utils';
 
 export interface SoporteRecurrente {
   id: number;
@@ -226,7 +227,7 @@ const calcNextExecution = (fecha: Date, frecuencia: string): Date => {
 
 // Evaluar reglas de recurrencia y generar tickets correspondientes
 export const processRecurrentSupports = async () => {
-  const hoyStr = new Date().toISOString().split('T')[0];
+  const hoyStr = getFechaHoyEcuador();
   
   // Buscar todas las reglas activas cuya siguiente ejecución es hoy o en el pasado
   const [recurrents] = await pool.query<RowDataPacket[]>(

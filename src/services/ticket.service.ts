@@ -2,27 +2,67 @@ import { pool } from '../db/connection';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { enviarCorreo, crearNotificacion } from './notificacion.service';
 import { config } from '../core/config';
+import { getSlaHoras } from './sla.service';
 import ExcelJS from 'exceljs';
+
+export const formatTicketResponse = (r: any) => {
+  if (!r) return null;
+  let parsedBitacora = [];
+  if (r.bitacora_dinamica || r.bitacora_raw) {
+    const rawBit = r.bitacora_dinamica || r.bitacora_raw;
+    if (typeof rawBit === 'string') {
+      try {
+        parsedBitacora = JSON.parse(rawBit);
+      } catch {
+        parsedBitacora = [];
+      }
+    } else if (Array.isArray(rawBit) || typeof rawBit === 'object') {
+      parsedBitacora = rawBit;
+    }
+  }
+
+  let parsedAdjuntos = [];
+  if (r.adjuntos) {
+    if (typeof r.adjuntos === 'string') {
+      try {
+        parsedAdjuntos = JSON.parse(r.adjuntos);
+      } catch {
+        parsedAdjuntos = [];
+      }
+    } else if (Array.isArray(r.adjuntos)) {
+      parsedAdjuntos = r.adjuntos;
+    }
+  }
+
+  const { bitacora_raw, ...rest } = r;
+  return {
+    ...rest,
+    bitacora_dinamica: parsedBitacora,
+    adjuntos: parsedAdjuntos
+  };
+};
 
 export const getTickets = async (currentUser: any, skip = 0, limit = 100) => {
   let query = `
     SELECT t.*,
            u.nombre_completo as tecnico_nombre,
            u_n1.nombre_completo as tecnico_n1_nombre,
+           u_n2.nombre_completo as tecnico_n2_nombre,
            e.nombre as empresa_nombre,
            s.nombre as sucursal_nombre,
            JSON_UNQUOTE(t.bitacora_dinamica) as bitacora_dinamica
     FROM ticket t
     LEFT JOIN usuario u ON t.tecnico_id = u.id
     LEFT JOIN usuario u_n1 ON t.tecnico_n1_id = u_n1.id
+    LEFT JOIN usuario u_n2 ON t.tecnico_n2_id = u_n2.id
     LEFT JOIN empresa e ON t.empresa_id = e.id
     LEFT JOIN sucursal s ON t.sucursal_id = s.id
   `;
   const params: any[] = [];
 
   if (currentUser.rol_nombre === 'TECNICO') {
-    query += ` WHERE (t.tecnico_id = ? OR t.tecnico_n1_id = ?)`;
-    params.push(currentUser.id, currentUser.id);
+    query += ` WHERE (t.tecnico_id = ? OR t.tecnico_n1_id = ? OR t.tecnico_n2_id = ?)`;
+    params.push(currentUser.id, currentUser.id, currentUser.id);
   } else if (currentUser.rol_nombre === 'USUARIO') {
     query += ` WHERE t.creador_id = ?`;
     params.push(currentUser.id);
@@ -33,23 +73,22 @@ export const getTickets = async (currentUser: any, skip = 0, limit = 100) => {
   params.push(limit, skip);
 
   const [rows] = await pool.query<RowDataPacket[]>(query, params);
-  return rows.map(r => ({
-    ...r,
-    bitacora_dinamica: typeof r.bitacora_dinamica === 'string'
-      ? JSON.parse(r.bitacora_dinamica)
-      : r.bitacora_dinamica || []
-  }));
+  return rows.map(r => formatTicketResponse(r));
 };
 export const createTicket = async (data: any, currentUser: any) => {
+  if (currentUser.rol_nombre === 'TECNICO' && currentUser.nivel_soporte === 'N2') {
+    throw new Error('Los técnicos con Nivel de Soporte N2 no tienen permitido crear nuevos tickets.');
+  }
+
   let tecnicoAsignado: number | null = null;
   const ahora = new Date();
   const diaSemana = ahora.getDay(); // 0=Dom, 6=Sab
 
-  if ((currentUser.rol_nombre === 'ADMIN' || currentUser.rol_nombre === 'SUPERVISOR') && data.tecnico_id) {
-    tecnicoAsignado = data.tecnico_id;
-  } else if (currentUser.rol_nombre === 'TECNICO' || currentUser.rol_nombre === 'SUPERVISOR' || currentUser.rol_nombre === 'ADMIN') {
+  if (data.tecnico_id) {
+    tecnicoAsignado = Number(data.tecnico_id);
+  } else if (currentUser.rol_nombre === 'TECNICO' && currentUser.nivel_soporte !== 'N2') {
     let isAssignedToCompany = true;
-    if (data.empresa_id && currentUser.rol_nombre === 'TECNICO') {
+    if (data.empresa_id) {
       const [assignedRows] = await pool.query<RowDataPacket[]>(
         `SELECT 1 FROM usuario_empresa WHERE usuario_id = ? AND empresa_id = ?`,
         [currentUser.id, data.empresa_id]
@@ -57,10 +96,12 @@ export const createTicket = async (data: any, currentUser: any) => {
       isAssignedToCompany = assignedRows.length > 0;
     }
 
-    if (isAssignedToCompany && !(currentUser.nivel_soporte === 'N2' && data.nivel_soporte !== 'N2')) {
+    if (isAssignedToCompany) {
       tecnicoAsignado = currentUser.id;
     }
-  } else {
+  }
+
+  if (!tecnicoAsignado) {
     // Verificar si es una sede con calendario especial (Gametown, El Teatro, Apparca)
     let isSpecialCompany = false;
     let specialSedeName = '';
@@ -216,13 +257,19 @@ export const createTicket = async (data: any, currentUser: any) => {
   }
 
   const bitacora = JSON.stringify([{ accion: `Ticket Creado por ${currentUser.nombre_completo}`, fecha: ahora.toISOString() }]);
+  const adjuntosJson = data.adjuntos 
+    ? (typeof data.adjuntos === 'string' ? data.adjuntos : JSON.stringify(data.adjuntos)) 
+    : null;
+
+  const tipoItil = (data.nivel_soporte && data.nivel_soporte !== 'N1') ? 'INCIDENCIA' : 'SOLICITUD';
+  const slaHorasCalculado = await getSlaHoras(tipoItil, data.prioridad || 'Media');
 
   const [result] = await pool.query<ResultSetHeader>(
     `INSERT INTO ticket
       (titulo, descripcion, categoria, empresa_id, sucursal_id, area_solicitante, persona_solicitante,
        medio_solicitud, fecha_final_tentativa, avance_proceso, observaciones, prioridad,
-       estado, nivel_soporte, bitacora_dinamica, creador_id, tecnico_id, tecnico_n1_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       estado, nivel_soporte, bitacora_dinamica, creador_id, tecnico_id, tecnico_n1_id, adjuntos, sla_horas)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.titulo, data.descripcion, data.categoria, data.empresa_id || null, data.sucursal_id || null,
       data.area_solicitante || null, data.persona_solicitante || null,
@@ -230,7 +277,9 @@ export const createTicket = async (data: any, currentUser: any) => {
       data.avance_proceso ?? 0, data.observaciones || null,
       data.prioridad || 'Media', data.estado || 'Nuevo',
       data.nivel_soporte || 'N1', bitacora, currentUser.id, tecnicoAsignado,
-      (data.nivel_soporte === 'N2') ? null : tecnicoAsignado
+      (data.nivel_soporte === 'N2') ? null : tecnicoAsignado,
+      adjuntosJson,
+      slaHorasCalculado
     ]
   );
 
@@ -323,13 +372,7 @@ export const createTicket = async (data: any, currentUser: any) => {
      WHERE t.id = ?`,
     [result.insertId]
   );
-  const ticket = rows[0];
-  return {
-    ...ticket,
-    bitacora_dinamica: typeof ticket.bitacora_dinamica === 'string'
-      ? JSON.parse(ticket.bitacora_dinamica)
-      : ticket.bitacora_dinamica || []
-  };
+  return formatTicketResponse(rows[0]);
 };
 export const updateTicket = async (ticketId: number, data: any, currentUser?: any) => {
   const [existing] = await pool.query<RowDataPacket[]>(`SELECT * FROM ticket WHERE id = ?`, [ticketId]);
@@ -347,30 +390,96 @@ export const updateTicket = async (ticketId: number, data: any, currentUser?: an
 
   let logs: string[] = [];
   if (currentUser) {
-    // Restricción Solo Lectura para técnico N1 en tickets asignados a N2/N3
+    // Restricción Solo Lectura para técnico N1 en tickets asignados a N2/N3 (a menos que esté en estado Resuelto)
     if (currentUser.rol_nombre === 'TECNICO' && currentUser.nivel_soporte === 'N1') {
       if (tOld.tecnico_id !== currentUser.id && (tOld.tecnico_n1_id === currentUser.id || tOld.nivel_soporte !== 'N1')) {
-        throw new Error('El ticket se encuentra asignado a N2/N3. Lo tienes en modo solo lectura para ver sus avances.');
+        if (tOld.estado !== 'Resuelto') {
+          throw new Error('El ticket se encuentra asignado a N2/N3. Lo tienes en modo solo lectura para ver sus avances.');
+        }
+      }
+    }
+
+    // Restricción Solo Lectura para técnico N2 en tickets devueltos a N1 o en estado Resuelto / Cerrado
+    if (currentUser.rol_nombre === 'TECNICO' && currentUser.nivel_soporte === 'N2') {
+      if (tOld.nivel_soporte === 'N1' || tOld.estado === 'Resuelto' || tOld.estado === 'Cerrado' || tOld.estado === 'Finalizada') {
+        throw new Error('El ticket fue devuelto a N1 o se encuentra en estado Resuelto/Cerrado. Lo tienes en modo solo lectura.');
       }
     }
 
     if (
       data.nivel_soporte === 'N3' || 
-      data.estado === 'Escalado a Proyecto' || 
+      data.estado === 'Elevado a Proveedor' ||
       data.estado === 'Escalado a Proveedor'
     ) {
-      if (currentUser.rol_nombre !== 'ADMIN' && currentUser.rol_nombre !== 'SUPERVISOR' && currentUser.nivel_soporte !== 'N2') {
-        throw new Error('Solo el personal de Nivel 2 o Administradores pueden elevar un soporte a Nivel 3 o a Proyecto.');
+      if (currentUser.rol_nombre !== 'ADMIN' && currentUser.rol_nombre !== 'SUPERVISOR' && currentUser.rol_nombre !== 'TECNICO') {
+        throw new Error('Solo el personal técnico, supervisores o administradores pueden elevar un soporte a Proveedor (N3).');
       }
     }
+
     if (data.estado !== undefined && data.estado !== tOld.estado) {
-      logs.push(`Estado cambiado de "${tOld.estado}" a "${data.estado}"`);
+      // 1) Si N2 marca el ticket como Cerrado o Resuelto
+      if ((data.estado === 'Cerrado' || data.estado === 'Finalizada' || data.estado === 'Resuelto') && tOld.nivel_soporte === 'N2') {
+        data.estado = 'Resuelto';
+        data.nivel_soporte = 'N1';
+        data.tecnico_n2_id = tOld.tecnico_id || currentUser.id;
+        if (tOld.tecnico_n1_id) {
+          data.tecnico_id = tOld.tecnico_n1_id;
+        }
+
+        const obsText = data.observaciones ? ` - Solución/Observación N2: "${data.observaciones}"` : '';
+        logs.push(`Ticket marcado como RESUELTO por N2 (${currentUser.nombre_completo}) y devuelto a N1 para confirmación con el usuario.${obsText}`);
+
+        const targetN1Id = tOld.tecnico_n1_id || tOld.creador_id;
+        if (targetN1Id && targetN1Id !== currentUser.id) {
+          const [n1UserRows] = await pool.query<RowDataPacket[]>(`SELECT email, nombre_completo FROM usuario WHERE id = ?`, [targetN1Id]);
+          if (n1UserRows.length > 0) {
+            crearNotificacion(
+              targetN1Id,
+              `Ticket Resuelto por N2 (Pendiente tu Cierre): ${tOld.titulo}`,
+              `El ticket #${tOld.id} "${tOld.titulo}" fue marcado como Resuelto por ${currentUser.nombre_completo}. Por favor contacta al usuario para confirmar la solución y cerrarlo definitivamente o reabrirlo.`
+            ).catch(console.error);
+
+            enviarCorreo(
+              n1UserRows[0].email,
+              `Ticket Resuelto por N2: ${tOld.titulo}`,
+              `Hola ${n1UserRows[0].nombre_completo},\n\nEl ticket "${tOld.titulo}" que escalaste a N2 ha sido marcado como Resuelto por ${currentUser.nombre_completo}.\n\nPor favor contacta al usuario solicitante para confirmar que todo funciona correctamente y procede a cerrar o reabrir el ticket en la plataforma.`
+            ).catch(console.error);
+          }
+        }
+      }
+      // 2) Si N1/Admin reabre el ticket (pasa a 'En Proceso' desde 'Resuelto' o 'Cerrado')
+      else if (data.estado === 'En Proceso' && (tOld.estado === 'Resuelto' || tOld.estado === 'Cerrado' || tOld.estado === 'Finalizada')) {
+        data.nivel_soporte = 'N1';
+        if (tOld.tecnico_n1_id) {
+          data.tecnico_id = tOld.tecnico_n1_id;
+        } else if (!data.tecnico_id) {
+          data.tecnico_id = currentUser.id;
+        }
+        logs.push(`Ticket reabierto por (${currentUser.nombre_completo}). Permanece asignado a N1 para su atención.`);
+
+        if (tOld.tecnico_n2_id && tOld.tecnico_n2_id !== currentUser.id) {
+          crearNotificacion(
+            tOld.tecnico_n2_id,
+            `Ticket Reabierto en N1: ${tOld.titulo}`,
+            `El ticket #${tOld.id} "${tOld.titulo}" fue reabierto por ${currentUser.nombre_completo} y se mantiene en N1.`
+          ).catch(console.error);
+        }
+      }
+      // 3) Si N1 o Admin cierra un ticket (pasa a 'Cerrado')
+      else if (data.estado === 'Cerrado' || data.estado === 'Finalizada') {
+        data.estado = 'Cerrado';
+        logs.push(`Ticket cerrado definitivamente por (${currentUser.nombre_completo}) tras confirmación con el usuario.`);
+      }
+      else {
+        logs.push(`Estado cambiado de "${tOld.estado}" a "${data.estado}"`);
+      }
       
       // SLA Pausing Logic (ITIL N3)
-      if (data.estado === 'Escalado a Proveedor') {
+      if (data.estado === 'Elevado a Proveedor' || data.estado === 'Escalado a Proveedor') {
+        data.estado = 'Elevado a Proveedor';
         data.nivel_soporte = 'N3';
         data.sla_paused_at = new Date();
-      } else if (tOld.estado === 'Escalado a Proveedor') {
+      } else if (tOld.estado === 'Elevado a Proveedor' || tOld.estado === 'Escalado a Proveedor') {
         data.sla_paused_at = null;
         data.nivel_soporte = 'N2'; // Regresar a N2 por defecto para revisión
         if (tOld.sla_paused_at) {
@@ -411,20 +520,19 @@ export const updateTicket = async (ticketId: number, data: any, currentUser?: an
   const vals: any[] = [];
   const allowed = ['titulo', 'descripcion', 'categoria', 'empresa_id', 'sucursal_id', 'area_solicitante', 'persona_solicitante',
     'medio_solicitud', 'fecha_final_tentativa', 'avance_proceso', 'observaciones', 'prioridad',
-    'estado', 'tecnico_id', 'nivel_soporte', 'grupo_n2', 'sla_paused_at', 'sla_acumulado_pausa_segundos'];
+    'estado', 'tecnico_id', 'tecnico_n1_id', 'tecnico_n2_id', 'nivel_soporte', 'grupo_n2', 'sla_paused_at', 'sla_acumulado_pausa_segundos'];
   for (const field of allowed) {
     if (data[field] !== undefined) { sets.push(`${field} = ?`); vals.push(data[field]); }
+  }
+  if (data.adjuntos !== undefined) {
+    sets.push('adjuntos = ?');
+    vals.push(typeof data.adjuntos === 'string' ? data.adjuntos : JSON.stringify(data.adjuntos));
   }
   if (data.bitacora_dinamica !== undefined) {
     sets.push('bitacora_dinamica = ?');
     vals.push(JSON.stringify(data.bitacora_dinamica));
   }
-  if (sets.length === 0) return {
-    ...tOld,
-    bitacora_dinamica: typeof tOld.bitacora_dinamica === 'string'
-      ? JSON.parse(tOld.bitacora_dinamica)
-      : tOld.bitacora_dinamica || []
-  };
+  if (sets.length === 0) return formatTicketResponse(tOld);
 
   // Preservar tecnico_n1_id si cambia tecnico_id y no estaba definido
   if (tOld.tecnico_id && !tOld.tecnico_n1_id && data.tecnico_id !== undefined && data.tecnico_id !== tOld.tecnico_id) {
@@ -455,8 +563,8 @@ export const updateTicket = async (ticketId: number, data: any, currentUser?: an
     }
   }
 
-  // Si el ticket se finaliza, enviar notificación al creador del ticket (solicitante)
-  if (data.estado === 'Finalizada' && tOld.estado !== 'Finalizada') {
+  // Si el ticket se cierra, enviar notificación al creador del ticket (solicitante)
+  if ((data.estado === 'Cerrado' || data.estado === 'Finalizada') && tOld.estado !== 'Cerrado' && tOld.estado !== 'Finalizada') {
     const [creatorRows] = await pool.query<RowDataPacket[]>(
       `SELECT email, nombre_completo FROM usuario WHERE id = ?`, [tOld.creador_id]
     );
@@ -465,15 +573,15 @@ export const updateTicket = async (ticketId: number, data: any, currentUser?: an
       // Notificación en la campana
       crearNotificacion(
         tOld.creador_id,
-        `Ticket Finalizado: ${tOld.titulo}`,
-        `Tu solicitud de soporte "${tOld.titulo}" ha sido resuelta. Observaciones: ${data.observaciones || 'Sin observaciones de cierre.'}`
+        `Ticket Cerrado: ${tOld.titulo}`,
+        `Tu solicitud de soporte "${tOld.titulo}" ha sido concluida y cerrada. Observaciones: ${data.observaciones || 'Sin observaciones de cierre.'}`
       ).catch(console.error);
 
       // Notificación por correo
       enviarCorreo(
         creatorUser.email,
-        `Solucionado: ${tOld.titulo}`,
-        `Hola ${creatorUser.nombre_completo},\n\nTu solicitud de soporte "${tOld.titulo}" ha sido resuelta por nuestro equipo.\n\nDetalle/Observaciones:\n${data.observaciones || 'Sin observaciones de cierre.'}\n\nGracias por usar el sistema.`
+        `Ticket Cerrado: ${tOld.titulo}`,
+        `Hola ${creatorUser.nombre_completo},\n\nTu solicitud de soporte "${tOld.titulo}" ha sido atendida y cerrada por nuestro equipo.\n\nDetalle/Observaciones:\n${data.observaciones || 'Sin observaciones de cierre.'}\n\nGracias por usar el sistema.`
       ).catch(console.error);
     }
   }
@@ -490,13 +598,63 @@ export const updateTicket = async (ticketId: number, data: any, currentUser?: an
     LEFT JOIN empresa e ON t.empresa_id = e.id 
     LEFT JOIN sucursal s ON t.sucursal_id = s.id
     WHERE t.id = ?`, [ticketId]);
-  const t = rows[0];
-  return {
-    ...t,
-    bitacora_dinamica: typeof t.bitacora_dinamica === 'string'
-      ? JSON.parse(t.bitacora_dinamica)
-      : t.bitacora_dinamica || []
-  };
+  return formatTicketResponse(rows[0]);
+};
+
+export const addAdjuntosToTicket = async (ticketId: number, newAdjuntos: any[], currentUser: any) => {
+  const [existing] = await pool.query<RowDataPacket[]>(`SELECT * FROM ticket WHERE id = ?`, [ticketId]);
+  if (existing.length === 0) return null;
+  const ticket = existing[0];
+
+  let currentAdjuntos: any[] = [];
+  if (ticket.adjuntos) {
+    if (typeof ticket.adjuntos === 'string') {
+      try {
+        currentAdjuntos = JSON.parse(ticket.adjuntos);
+      } catch {
+        currentAdjuntos = [];
+      }
+    } else if (Array.isArray(ticket.adjuntos)) {
+      currentAdjuntos = ticket.adjuntos;
+    }
+  }
+
+  let bitacora = [];
+  try {
+    bitacora = typeof ticket.bitacora_dinamica === 'string'
+      ? JSON.parse(ticket.bitacora_dinamica)
+      : ticket.bitacora_dinamica || [];
+  } catch {
+    bitacora = [];
+  }
+
+  const updatedAdjuntos = [...currentAdjuntos, ...newAdjuntos];
+  const fileNames = newAdjuntos.map((a: any) => a.nombre).join(', ');
+  bitacora.push({
+    accion: `Se adjuntaron ${newAdjuntos.length} archivo(s): ${fileNames}`,
+    fecha: new Date().toISOString(),
+    usuario: currentUser?.nombre_completo || 'Usuario'
+  });
+
+  await pool.query(
+    `UPDATE ticket SET adjuntos = ?, bitacora_dinamica = ?, updated_at = NOW() WHERE id = ?`,
+    [JSON.stringify(updatedAdjuntos), JSON.stringify(bitacora), ticketId]
+  );
+
+  const [updatedRows] = await pool.query<RowDataPacket[]>(`
+    SELECT t.*, 
+           u.nombre_completo as tecnico_nombre, 
+           u_n1.nombre_completo as tecnico_n1_nombre,
+           e.nombre as empresa_nombre, 
+           s.nombre as sucursal_nombre 
+    FROM ticket t 
+    LEFT JOIN usuario u ON t.tecnico_id = u.id 
+    LEFT JOIN usuario u_n1 ON t.tecnico_n1_id = u_n1.id
+    LEFT JOIN empresa e ON t.empresa_id = e.id 
+    LEFT JOIN sucursal s ON t.sucursal_id = s.id
+    WHERE t.id = ?`, [ticketId]);
+
+  return formatTicketResponse(updatedRows[0]);
 };
 
 export const agregarBitacora = async (ticketId: number, currentUser: any, accion: string) => {
@@ -525,22 +683,39 @@ export const escalarTicketAN2 = async (
   if (existing.length === 0) return null;
   const ticket = existing[0];
 
-  // Cargar técnicos activos N2 de ese grupo específico y asignados a la empresa del ticket
+  // Cargar técnicos activos N2 de ese grupo específico y asignados a la empresa/sucursal del ticket
   let techRows: RowDataPacket[] = [];
-  if (ticket.empresa_id) {
+  if (ticket.sucursal_id) {
     const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT u.id, u.nombre_completo, u.email 
+      `SELECT DISTINCT u.id, u.nombre_completo, u.email 
        FROM usuario u
        JOIN rol r ON u.rol_id = r.id
-       JOIN usuario_empresa ue ON u.id = ue.usuario_id
-       WHERE r.nombre = 'TECNICO' AND u.nivel_soporte = 'N2' AND u.grupo_n2 = ? AND u.is_active = 1 AND ue.empresa_id = ?`,
-      [grupo_n2, ticket.empresa_id]
+       LEFT JOIN usuario_sucursal us ON u.id = us.usuario_id
+       LEFT JOIN sucursal s ON s.usuario_id = u.id
+       WHERE r.nombre = 'TECNICO' AND u.nivel_soporte = 'N2' AND u.grupo_n2 = ? AND u.is_active = 1
+         AND (us.sucursal_id = ? OR s.id = ?)`,
+      [grupo_n2, ticket.sucursal_id, ticket.sucursal_id]
     );
     techRows = rows;
   }
 
-  // Fallback: cargar todos los técnicos activos N2 de ese grupo
-  if (techRows.length === 0) {
+  if (techRows.length === 0 && ticket.empresa_id) {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT DISTINCT u.id, u.nombre_completo, u.email 
+       FROM usuario u
+       JOIN rol r ON u.rol_id = r.id
+       LEFT JOIN usuario_empresa ue ON u.id = ue.usuario_id
+       LEFT JOIN usuario_sucursal us ON u.id = us.usuario_id
+       LEFT JOIN sucursal s ON us.sucursal_id = s.id OR s.usuario_id = u.id
+       WHERE r.nombre = 'TECNICO' AND u.nivel_soporte = 'N2' AND u.grupo_n2 = ? AND u.is_active = 1
+         AND (ue.empresa_id = ? OR s.empresa_id = ?)`,
+      [grupo_n2, ticket.empresa_id, ticket.empresa_id]
+    );
+    techRows = rows;
+  }
+
+  // Fallback únicamente si el ticket no tiene empresa ni sucursal especificada
+  if (techRows.length === 0 && !ticket.empresa_id && !ticket.sucursal_id) {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT u.id, u.nombre_completo, u.email 
        FROM usuario u
@@ -619,10 +794,11 @@ export const escalarTicketAN2 = async (
          grupo_n2 = ?,
          tecnico_id = ?, 
          tecnico_n1_id = ?,
+         tecnico_n2_id = ?,
          bitacora_dinamica = ?, 
          updated_at = NOW() 
      WHERE id = ?`,
-    [grupo_n2, finalTecnicoId, n1IdToKeep, JSON.stringify(bitacora), ticketId]
+    [grupo_n2, finalTecnicoId, n1IdToKeep, finalTecnicoId, JSON.stringify(bitacora), ticketId]
   );
 
   // Enviar correo y notificación al N1 original si no es quien escaló
@@ -681,15 +857,12 @@ export const escalarTicketAN2 = async (
      WHERE t.id = ?`,
     [ticketId]
   );
-  return {
-    ...updatedRows[0],
-    bitacora_dinamica: bitacora
-  };
+  return formatTicketResponse(updatedRows[0]);
 };
 
 export const escalarTicketAProveedor = async (ticketId: number, currentUser: any) => {
-  if (currentUser.rol_nombre !== 'ADMIN' && currentUser.rol_nombre !== 'SUPERVISOR' && currentUser.nivel_soporte !== 'N2') {
-    throw new Error('Solo el personal de Nivel 2, Supervisores o Administradores pueden elevar un soporte a Proveedor (N3).');
+  if (currentUser.rol_nombre !== 'ADMIN' && currentUser.rol_nombre !== 'SUPERVISOR' && currentUser.rol_nombre !== 'TECNICO') {
+    throw new Error('Solo los técnicos, supervisores o administradores pueden elevar un soporte a Proveedor (N3).');
   }
 
   const [existing] = await pool.query<RowDataPacket[]>(`SELECT * FROM ticket WHERE id = ?`, [ticketId]);
@@ -707,7 +880,7 @@ export const escalarTicketAProveedor = async (ticketId: number, currentUser: any
 
   const ahora = new Date();
   bitacora.push({
-    accion: `Ticket escalado a Proveedor (N3) por ${currentUser.nombre_completo} - SLA Pausado`,
+    accion: `Ticket elevado a Proveedor (N3) por ${currentUser.nombre_completo} - SLA Pausado`,
     fecha: ahora.toISOString(),
     usuario: currentUser.nombre_completo
   });
@@ -715,7 +888,7 @@ export const escalarTicketAProveedor = async (ticketId: number, currentUser: any
   await pool.query(
     `UPDATE ticket 
      SET nivel_soporte = 'N3', 
-         estado = 'Escalado a Proveedor', 
+         estado = 'Elevado a Proveedor', 
          sla_paused_at = NOW(), 
          bitacora_dinamica = ?, 
          updated_at = NOW() 
@@ -754,10 +927,130 @@ export const escalarTicketAProveedor = async (ticketId: number, currentUser: any
      WHERE t.id = ?`,
     [ticketId]
   );
-  return {
-    ...updatedRows[0],
-    bitacora_dinamica: bitacora
-  };
+  return formatTicketResponse(updatedRows[0]);
+};
+
+export const escalarTicketAAdmin = async (
+  ticketId: number,
+  data: { tecnico_id?: number | null },
+  currentUser: any
+) => {
+  if (currentUser.rol_nombre !== 'SUPERVISOR' && currentUser.rol_nombre !== 'ADMIN') {
+    throw new Error('Solo el personal de Supervisión o Administración puede escalar un soporte a Nivel Administración.');
+  }
+
+  const [existing] = await pool.query<RowDataPacket[]>(
+    `SELECT * FROM ticket WHERE id = ?`, [ticketId]
+  );
+  if (existing.length === 0) return null;
+  const ticket = existing[0];
+
+  // Cargar administradores activos habilitados para recibir escalado (recibir_escalado_admin = 1)
+  const [adminRows] = await pool.query<RowDataPacket[]>(
+    `SELECT u.id, u.nombre_completo, u.email 
+     FROM usuario u
+     JOIN rol r ON u.rol_id = r.id
+     WHERE r.nombre = 'ADMIN' AND u.is_active = 1 AND (u.recibir_escalado_admin IS NULL OR u.recibir_escalado_admin = 1)`
+  );
+
+  if (adminRows.length === 0) {
+    throw new Error('No hay Administradores habilitados en la plataforma para recibir este escalamiento.');
+  }
+
+  let finalAdminId: number | null = null;
+  let finalAdminNombre = 'Administración';
+  let finalAdminEmail = '';
+
+  const tecnico_id = data.tecnico_id;
+  if (tecnico_id && Number(tecnico_id) > 0) {
+    const matched = adminRows.find(a => a.id === Number(tecnico_id));
+    if (!matched) {
+      throw new Error('El Administrador seleccionado no está habilitado para recibir escalamientos desde base de datos.');
+    }
+    finalAdminId = matched.id;
+    finalAdminNombre = matched.nombre_completo;
+    finalAdminEmail = matched.email;
+  } else {
+    // Auto-balanceo entre Administradores habilitados
+    if (adminRows.length === 1) {
+      finalAdminId = adminRows[0].id;
+      finalAdminNombre = adminRows[0].nombre_completo;
+      finalAdminEmail = adminRows[0].email;
+    } else {
+      const adminIds = adminRows.map(a => a.id);
+      const [balanceo] = await pool.query<RowDataPacket[]>(
+        `SELECT u.id, COUNT(t.id) as total_tickets
+         FROM usuario u
+         LEFT JOIN ticket t ON u.id = t.tecnico_id AND t.estado IN ('Nuevo', 'Pendiente', 'En Proceso')
+         WHERE u.id IN (?)
+         GROUP BY u.id
+         ORDER BY total_tickets ASC
+         LIMIT 1`,
+        [adminIds]
+      );
+      if (balanceo.length > 0) {
+        finalAdminId = balanceo[0].id;
+        const found = adminRows.find(a => a.id === finalAdminId);
+        if (found) {
+          finalAdminNombre = found.nombre_completo;
+          finalAdminEmail = found.email;
+        }
+      }
+    }
+  }
+
+  const bitacora = typeof ticket.bitacora_dinamica === 'string'
+    ? JSON.parse(ticket.bitacora_dinamica)
+    : ticket.bitacora_dinamica || [];
+
+  bitacora.push({
+    accion: `Ticket escalado a Nivel Administración por ${currentUser.nombre_completo}. Asignado a: ${finalAdminNombre}`,
+    fecha: new Date().toISOString(),
+    usuario: currentUser.nombre_completo
+  });
+
+  await pool.query(
+    `UPDATE ticket 
+     SET nivel_soporte = 'ADMIN', 
+         estado = 'Elevado a Administración', 
+         tecnico_id = ?, 
+         bitacora_dinamica = ?, 
+         updated_at = NOW() 
+     WHERE id = ?`,
+    [finalAdminId, JSON.stringify(bitacora), ticketId]
+  );
+
+  if (finalAdminId) {
+    crearNotificacion(
+      finalAdminId,
+      `Ticket Escalado a Nivel Administración: ${ticket.titulo}`,
+      `El ticket #${ticket.id} "${ticket.titulo}" fue escalado a Nivel Administración por ${currentUser.nombre_completo}.`
+    ).catch(console.error);
+
+    if (finalAdminEmail) {
+      enviarCorreo(
+        finalAdminEmail,
+        `Ticket Escalado a Administración: ${ticket.titulo}`,
+        `Hola ${finalAdminNombre},\n\nSe te ha asignado el ticket #${ticket.id} "${ticket.titulo}" por escalación a Nivel Administración realizada por ${currentUser.nombre_completo}.\n\nIngresa a la plataforma para gestionarlo.`
+      ).catch(console.error);
+    }
+  }
+
+  const [updatedRows] = await pool.query<RowDataPacket[]>(
+    `SELECT t.*, 
+            u.nombre_completo as tecnico_nombre, 
+            u_n1.nombre_completo as tecnico_n1_nombre,
+            e.nombre as empresa_nombre, 
+            s.nombre as sucursal_nombre 
+     FROM ticket t 
+     LEFT JOIN usuario u ON t.tecnico_id = u.id 
+     LEFT JOIN usuario u_n1 ON t.tecnico_n1_id = u_n1.id
+     LEFT JOIN empresa e ON t.empresa_id = e.id 
+     LEFT JOIN sucursal s ON t.sucursal_id = s.id
+     WHERE t.id = ?`,
+    [ticketId]
+  );
+  return formatTicketResponse(updatedRows[0]);
 };
 
 export const escalarTicketAProyecto = async (ticketId: number, currentUser: any) => {
@@ -857,10 +1150,7 @@ export const escalarTicketAProyecto = async (ticketId: number, currentUser: any)
   );
 
   return {
-    ticket: {
-      ...updatedRows[0],
-      bitacora_dinamica: bitacora
-    },
+    ticket: formatTicketResponse(updatedRows[0]),
     proyecto_id: proyectoId,
     proyecto_nombre: nombreProyecto
   };
@@ -999,7 +1289,8 @@ export const getTicketsPaginated = async (
   excludeStatus?: string, 
   estado?: string, 
   search?: string,
-  tecnicoId?: number | string
+  tecnicoId?: number | string,
+  tipoItil?: 'SOLICITUDES' | 'INCIDENCIAS' | string
 ) => {
   const pageNum = Math.max(1, Number(page) || 1);
   const limitNum = Math.max(1, Number(limit) || 10);
@@ -1007,12 +1298,32 @@ export const getTicketsPaginated = async (
   let whereClauses: string[] = [];
   const params: any[] = [];
 
+  const isTechN2 = currentUser.rol_nombre === 'TECNICO' && currentUser.nivel_soporte === 'N2';
+  const effectiveTipoItil = isTechN2 ? 'INCIDENCIAS' : (tipoItil || 'SOLICITUDES');
+
   if (currentUser.rol_nombre === 'TECNICO') {
-    whereClauses.push(`(t.tecnico_id = ? OR t.tecnico_n1_id = ?)`);
-    params.push(currentUser.id, currentUser.id);
+    if (isTechN2) {
+      whereClauses.push(`(t.tecnico_id = ? OR t.tecnico_n2_id = ?)`);
+      params.push(currentUser.id, currentUser.id);
+    } else {
+      if (effectiveTipoItil === 'INCIDENCIAS') {
+        whereClauses.push(`(t.tecnico_n1_id = ? OR t.creador_id = ?)`);
+        params.push(currentUser.id, currentUser.id);
+      } else {
+        whereClauses.push(`(t.tecnico_id = ? OR t.tecnico_n1_id = ? OR t.creador_id = ?)`);
+        params.push(currentUser.id, currentUser.id, currentUser.id);
+      }
+    }
   } else if (currentUser.rol_nombre === 'USUARIO') {
     whereClauses.push(`t.creador_id = ?`);
     params.push(currentUser.id);
+  }
+
+  // Filtro ITIL: SOLICITUDES (Nivel 1) vs INCIDENCIAS (N2, N3 / Proveedor, Administración)
+  if (effectiveTipoItil === 'SOLICITUDES') {
+    whereClauses.push(`((t.nivel_soporte = 'N1' OR t.nivel_soporte IS NULL) AND t.estado NOT IN ('Elevado a Proveedor', 'Elevado a Administración', 'Escalado a Proveedor'))`);
+  } else if (effectiveTipoItil === 'INCIDENCIAS') {
+    whereClauses.push(`(t.nivel_soporte IN ('N2', 'N3', 'ADMIN') OR t.estado IN ('Elevado a Proveedor', 'Elevado a Administración', 'Escalado a Proveedor'))`);
   }
 
   if (excludeStatus) {
@@ -1027,8 +1338,8 @@ export const getTicketsPaginated = async (
 
   if (tecnicoId && Number(tecnicoId) > 0) {
     const techIdNum = Number(tecnicoId);
-    whereClauses.push(`(t.tecnico_id = ? OR t.tecnico_n1_id = ?)`);
-    params.push(techIdNum, techIdNum);
+    whereClauses.push(`(t.tecnico_id = ? OR t.tecnico_n1_id = ? OR t.tecnico_n2_id = ?)`);
+    params.push(techIdNum, techIdNum, techIdNum);
   }
 
   if (search) {
@@ -1053,12 +1364,14 @@ export const getTicketsPaginated = async (
     SELECT t.*,
            u.nombre_completo as tecnico_nombre,
            u_n1.nombre_completo as tecnico_n1_nombre,
+           u_n2.nombre_completo as tecnico_n2_nombre,
            e.nombre as empresa_nombre,
            s.nombre as sucursal_nombre,
            t.bitacora_dinamica as bitacora_raw
     FROM ticket t
     LEFT JOIN usuario u ON t.tecnico_id = u.id
     LEFT JOIN usuario u_n1 ON t.tecnico_n1_id = u_n1.id
+    LEFT JOIN usuario u_n2 ON t.tecnico_n2_id = u_n2.id
     LEFT JOIN empresa e ON t.empresa_id = e.id
     LEFT JOIN sucursal s ON t.sucursal_id = s.id
     ${whereStr}
@@ -1068,25 +1381,7 @@ export const getTicketsPaginated = async (
   const selectParams = [...params, limitNum, skip];
   const [dataRows] = await pool.query<RowDataPacket[]>(selectQuery, selectParams);
 
-  const data = dataRows.map(r => {
-    let parsedBitacora = [];
-    if (r.bitacora_raw) {
-      if (typeof r.bitacora_raw === 'string') {
-        try {
-          parsedBitacora = JSON.parse(r.bitacora_raw);
-        } catch (e) {
-          parsedBitacora = [];
-        }
-      } else if (Array.isArray(r.bitacora_raw) || typeof r.bitacora_raw === 'object') {
-        parsedBitacora = r.bitacora_raw;
-      }
-    }
-    const { bitacora_raw, ...rest } = r;
-    return {
-      ...rest,
-      bitacora_dinamica: parsedBitacora
-    };
-  });
+  const data = dataRows.map(r => formatTicketResponse(r));
 
   return {
     total,

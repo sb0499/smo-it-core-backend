@@ -1,8 +1,86 @@
 import { Router } from 'express';
 import { requireAuth, requireAdmin } from '../middlewares/auth.middleware';
 import * as ctrl from '../controllers/ticket.controller';
+import * as reporteDiarioCtrl from '../controllers/reporte-diario.controller';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+
+const UPLOAD_DIR = path.join(process.cwd(), 'uploads', 'tickets');
+if (!fs.existsSync(UPLOAD_DIR)) {
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, UPLOAD_DIR);
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, 'ticket-' + uniqueSuffix + ext);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 25 * 1024 * 1024 } // 25MB max
+});
 
 export const ticketsRouter = Router();
+
+/**
+ * @openapi
+ * /api/v1/tickets/upload:
+ *   post:
+ *     tags: [Tickets]
+ *     summary: Subir archivos/evidencias de tickets temporalmente o antes de crear
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               archivos:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                   format: binary
+ *     responses:
+ *       200:
+ *         description: Archivos subidos exitosamente
+ */
+ticketsRouter.post('/upload', requireAuth, upload.array('archivos', 10), ctrl.uploadTicketFiles);
+
+/**
+ * @openapi
+ * /api/v1/tickets/{ticket_id}/adjuntos:
+ *   post:
+ *     tags: [Tickets]
+ *     summary: Adjuntar nuevos archivos/evidencias directamente a un ticket existente
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: ticket_id
+ *         required: true
+ *         schema: { type: integer }
+ *     requestBody:
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               archivos:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                   format: binary
+ *     responses:
+ *       200:
+ *         description: Archivos adjuntados al ticket
+ */
+ticketsRouter.post('/:ticket_id/adjuntos', requireAuth, upload.array('archivos', 10), ctrl.addTicketAdjuntos);
 
 /**
  * @openapi
@@ -120,6 +198,7 @@ ticketsRouter.put('/:ticket_id', requireAuth, ctrl.updateTicket);
  *         description: Ticket no encontrado o no se pudo escalar
  */
 ticketsRouter.post('/:ticket_id/escalar-n2', requireAuth, ctrl.escalarTicketAN2);
+ticketsRouter.post('/:ticket_id/escalar-admin', requireAuth, ctrl.escalarTicketAAdmin);
 ticketsRouter.post('/:ticket_id/escalar-proveedor', requireAuth, ctrl.escalarTicketAProveedor);
 ticketsRouter.post('/:ticket_id/escalar-proyecto', requireAuth, ctrl.escalarTicketAProyecto);
 
@@ -158,6 +237,45 @@ ticketsRouter.post('/alertas/cierre-diario', requireAuth, ctrl.ejecutarRecordato
 
 /**
  * @openapi
+ * /api/v1/tickets/reporte-diario/preview:
+ *   get:
+ *     tags: [Tickets]
+ *     summary: Obtener resumen consolidado diario por técnico
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: Resumen ejecutivo del día
+ */
+ticketsRouter.get('/reporte-diario/preview', requireAuth, reporteDiarioCtrl.getPreviewReporteDiario);
+
+/**
+ * @openapi
+ * /api/v1/tickets/reporte-diario/excel:
+ *   get:
+ *     tags: [Tickets]
+ *     summary: Descargar reporte diario en Excel con hojas por técnico
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: Archivo Excel (.xlsx)
+ */
+ticketsRouter.get('/reporte-diario/excel', requireAuth, reporteDiarioCtrl.descargarReporteDiarioExcel);
+
+/**
+ * @openapi
+ * /api/v1/tickets/reporte-diario/enviar-correo:
+ *   post:
+ *     tags: [Tickets]
+ *     summary: Enviar reporte diario por correo a Administradores y Supervisores
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: Confirmación de envío
+ */
+ticketsRouter.post('/reporte-diario/enviar-correo', requireAuth, reporteDiarioCtrl.enviarReporteDiarioEmail);
+
+/**
+ * @openapi
  * /api/v1/tickets/categorias:
  *   get:
  *     tags: [Tickets]
@@ -168,3 +286,4 @@ ticketsRouter.post('/alertas/cierre-diario', requireAuth, ctrl.ejecutarRecordato
  *         description: Lista de categorías
  */
 ticketsRouter.get('/categorias', requireAuth, ctrl.getCategorias);
+

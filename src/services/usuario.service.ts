@@ -14,7 +14,7 @@ export const getUsuarios = async (skip = 0, limit = 100, search = '') => {
   const whereStr = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
 
   const query = `
-    SELECT u.id, u.email, u.nombre_completo, u.is_active, u.created_at, u.updated_at, u.recibir_notificaciones_correo,
+    SELECT u.id, u.email, u.nombre_completo, u.is_active, u.created_at, u.updated_at, u.recibir_notificaciones_correo, u.recibir_escalado_admin,
             u.rol_id, r.nombre as rol_nombre, u.must_change_password, u.nivel_soporte, u.grupo_n2,
             GROUP_CONCAT(DISTINCT ue.empresa_id) as empresa_ids,
             GROUP_CONCAT(DISTINCT e_sop.nombre SEPARATOR ',') as empresa_nombres,
@@ -44,6 +44,7 @@ export const getUsuarios = async (skip = 0, limit = 100, search = '') => {
   return rows.map(u => ({
     ...u,
     recibir_notificaciones_correo: u.recibir_notificaciones_correo ?? 1,
+    recibir_escalado_admin: u.recibir_escalado_admin ?? 1,
     rol: u.rol_nombre,
     empresa_ids: u.empresa_ids ? u.empresa_ids.split(',').map(Number) : [],
     empresa_nombres: u.empresa_nombres ? u.empresa_nombres.split(',') : [],

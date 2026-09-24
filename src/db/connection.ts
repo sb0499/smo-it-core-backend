@@ -1,4 +1,4 @@
-import mysql from 'mysql2/promise';
+import mysql, { RowDataPacket } from 'mysql2/promise';
 import { config } from '../core/config';
 import { initializeE2EE } from './e2ee';
 // Trigger reload for E2EE wipe - Reset 3
@@ -14,13 +14,16 @@ export const pool = mysql.createPool({
   connectionLimit: 10,
   maxIdle: 10,
   idleTimeout: 60000,
-  queueLimit: 0
+  queueLimit: 0,
+  timezone: '-05:00', // Ecuador timezone UTC-5
+  dateStrings: true
 });
 
 // Test the connection
 pool.getConnection()
   .then(async (connection) => {
     console.log('Successfully connected to the database.');
+    await connection.query("SET time_zone = '-05:00'");
     connection.release();
     
     // Run schema migrations
@@ -489,6 +492,10 @@ async function initDbSchema() {
       console.log('Adding recibir_notificaciones_correo column to usuario table...');
       await pool.query(`ALTER TABLE usuario ADD COLUMN recibir_notificaciones_correo TINYINT(1) NOT NULL DEFAULT 1`);
     }
+    if (!usuarioColNames.includes('recibir_escalado_admin')) {
+      console.log('Adding recibir_escalado_admin column to usuario table...');
+      await pool.query(`ALTER TABLE usuario ADD COLUMN recibir_escalado_admin TINYINT(1) NOT NULL DEFAULT 1`);
+    }
 
     // Check and add encrypted_channel_key column to chat_canal_miembro if missing
     const [colsMiembro] = await pool.query<any[]>(`SHOW COLUMNS FROM chat_canal_miembro`);
@@ -603,7 +610,28 @@ async function initDbSchema() {
     }
     if (!ticketColNames.includes('nivel_soporte')) {
       console.log('Adding nivel_soporte column to ticket table...');
-      await pool.query(`ALTER TABLE ticket ADD COLUMN nivel_soporte ENUM('N1','N2','N3') DEFAULT 'N1'`);
+      await pool.query(`ALTER TABLE ticket ADD COLUMN nivel_soporte ENUM('N1','N2','N3','ADMIN') DEFAULT 'N1'`);
+    } else {
+      try {
+        await pool.query(`ALTER TABLE ticket MODIFY COLUMN nivel_soporte ENUM('N1','N2','N3','ADMIN') DEFAULT 'N1'`);
+      } catch (err: any) {
+        console.log('Note on modifying nivel_soporte ENUM:', err.message);
+      }
+    }
+
+    try {
+      // 1. Ampliar ENUM temporalmente para permitir valores antiguos y nuevos durante la normalización
+      await pool.query(`ALTER TABLE ticket MODIFY COLUMN estado ENUM('Nuevo','En Proceso','Pendiente','Pruebas','Resuelto','Finalizada','Cerrado','Escalado a Proyecto','Escalado a Proveedor','Elevado a Proveedor','Elevado a Administración') DEFAULT 'Nuevo'`);
+      
+      // 2. Normalizar registros existentes
+      await pool.query(`UPDATE ticket SET estado = 'Cerrado' WHERE estado = 'Finalizada'`);
+      await pool.query(`UPDATE ticket SET estado = 'Elevado a Proveedor' WHERE estado = 'Escalado a Proveedor'`);
+      await pool.query(`UPDATE ticket SET estado = 'En Proceso' WHERE estado IN ('Pendiente', 'Pruebas', 'Escalado a Proyecto')`);
+
+      // 3. Establecer el ENUM estandarizado definitivo
+      await pool.query(`ALTER TABLE ticket MODIFY COLUMN estado ENUM('Nuevo','En Proceso','Resuelto','Cerrado','Elevado a Proveedor','Elevado a Administración') DEFAULT 'Nuevo'`);
+    } catch (err: any) {
+      console.log('Note on modifying ticket estado ENUM:', err.message);
     }
     if (!ticketColNames.includes('grupo_n2')) {
       console.log('Adding grupo_n2 column to ticket table...');
@@ -624,6 +652,18 @@ async function initDbSchema() {
     if (!ticketColNames.includes('tecnico_n1_id')) {
       console.log('Adding tecnico_n1_id column to ticket table...');
       await pool.query(`ALTER TABLE ticket ADD COLUMN tecnico_n1_id INT NULL`);
+    }
+    if (!ticketColNames.includes('tecnico_n2_id')) {
+      console.log('Adding tecnico_n2_id column to ticket table...');
+      await pool.query(`ALTER TABLE ticket ADD COLUMN tecnico_n2_id INT NULL`);
+    }
+    if (!ticketColNames.includes('adjuntos')) {
+      console.log('Adding adjuntos column to ticket table...');
+      await pool.query(`ALTER TABLE ticket ADD COLUMN adjuntos JSON NULL`);
+    }
+    if (!ticketColNames.includes('sla_horas')) {
+      console.log('Adding sla_horas column to ticket table...');
+      await pool.query(`ALTER TABLE ticket ADD COLUMN sla_horas INT NULL`);
     }
 
     // Auto-poblar tecnico_n1_id en tickets existentes si es nulo
@@ -676,6 +716,139 @@ async function initDbSchema() {
         CONSTRAINT fk_bc_creador FOREIGN KEY (creador_id) REFERENCES usuario(id) ON DELETE SET NULL
       ) ENGINE=InnoDB;
     `);
+
+    // Check and update consumible table columns
+    console.log('Checking/updating consumible table columns...');
+    const [colsConsumible] = await pool.query<any[]>(`SHOW COLUMNS FROM consumible`);
+    const consumibleColNames = colsConsumible.map((c: any) => c.Field);
+
+    if (!consumibleColNames.includes('codigo')) {
+      console.log('Adding codigo column to consumible table...');
+      await pool.query(`ALTER TABLE consumible ADD COLUMN codigo VARCHAR(50) NULL`);
+    }
+    if (!consumibleColNames.includes('empresa_id')) {
+      console.log('Adding empresa_id column to consumible table...');
+      await pool.query(`ALTER TABLE consumible ADD COLUMN empresa_id INT NULL`);
+      try {
+        await pool.query(`ALTER TABLE consumible ADD CONSTRAINT fk_consumible_empresa FOREIGN KEY (empresa_id) REFERENCES empresa(id) ON DELETE SET NULL`);
+      } catch (e: any) {}
+    }
+    if (!consumibleColNames.includes('serial')) {
+      console.log('Adding serial column to consumible table...');
+      await pool.query(`ALTER TABLE consumible ADD COLUMN serial VARCHAR(100) NULL`);
+    }
+    if (!consumibleColNames.includes('precio_unitario')) {
+      console.log('Adding precio_unitario column to consumible table...');
+      await pool.query(`ALTER TABLE consumible ADD COLUMN precio_unitario DECIMAL(10,2) DEFAULT 0.00`);
+    }
+    if (!consumibleColNames.includes('fecha_restock')) {
+      console.log('Adding fecha_restock column to consumible table...');
+      await pool.query(`ALTER TABLE consumible ADD COLUMN fecha_restock DATETIME NULL`);
+    }
+    if (!consumibleColNames.includes('is_active')) {
+      console.log('Adding is_active column to consumible table...');
+      await pool.query(`ALTER TABLE consumible ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1`);
+    }
+    if (!consumibleColNames.includes('created_at')) {
+      console.log('Adding created_at column to consumible table...');
+      await pool.query(`ALTER TABLE consumible ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+    }
+    if (!consumibleColNames.includes('updated_at')) {
+      console.log('Adding updated_at column to consumible table...');
+      await pool.query(`ALTER TABLE consumible ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`);
+    }
+
+    // Create consumible_historial table
+    console.log('Checking/creating consumible_historial table...');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS consumible_historial (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        consumible_id INT NOT NULL,
+        tipo_movimiento ENUM('USO', 'RESTOCK', 'AJUSTE') NOT NULL,
+        cantidad INT NOT NULL,
+        stock_anterior INT NOT NULL,
+        stock_nuevo INT NOT NULL,
+        motivo TEXT NULL,
+        usuario_id INT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT fk_ch_consumible FOREIGN KEY (consumible_id) REFERENCES consumible(id) ON DELETE CASCADE,
+        CONSTRAINT fk_ch_usuario FOREIGN KEY (usuario_id) REFERENCES usuario(id) ON DELETE SET NULL
+      ) ENGINE=InnoDB;
+    `);
+
+    // Create area table for requesting areas
+    console.log('Checking/creating area table...');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS area (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        nombre VARCHAR(150) NOT NULL UNIQUE,
+        descripcion VARCHAR(255) NULL,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB;
+    `);
+
+    // Seed default areas if table is empty
+    const [areaCountRows] = await pool.query<RowDataPacket[]>('SELECT COUNT(*) as count FROM area');
+    if (areaCountRows[0].count === 0) {
+      console.log('Seeding default areas...');
+      const defaultAreas = [
+        'Administración',
+        'Contabilidad',
+        'Recursos Humanos',
+        'Ventas / Comercial',
+        'Operaciones',
+        'Sistemas / TI',
+        'Marketing',
+        'Finanzas',
+        'Servicio al Cliente',
+        'Bodega / Logística',
+        'Gerencia General',
+        'Legal / Cumplimiento'
+      ];
+      for (const nombre of defaultAreas) {
+        await pool.query('INSERT IGNORE INTO area (nombre, descripcion) VALUES (?, ?)', [nombre, `Área de ${nombre}`]);
+      }
+    }
+
+    // Create configuracion_sla table
+    console.log('Checking/creating configuracion_sla table...');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS configuracion_sla (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        tipo_itil ENUM('SOLICITUD', 'INCIDENCIA') NOT NULL,
+        prioridad ENUM('Baja', 'Media', 'Alta', 'Critica') NOT NULL,
+        tiempo_horas INT NOT NULL,
+        descripcion VARCHAR(255) NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_tipo_prioridad (tipo_itil, prioridad)
+      ) ENGINE=InnoDB;
+    `);
+
+    // Seed default SLA configurations if empty
+    const [slaCountRows] = await pool.query<RowDataPacket[]>('SELECT COUNT(*) as count FROM configuracion_sla');
+    if (slaCountRows[0].count === 0) {
+      console.log('Seeding default SLA configurations...');
+      const defaultSla = [
+        // Solicitudes (Nivel N1)
+        { tipo_itil: 'SOLICITUD', prioridad: 'Critica', tiempo_horas: 4, descripcion: 'Solicitud urgente de servicio' },
+        { tipo_itil: 'SOLICITUD', prioridad: 'Alta', tiempo_horas: 8, descripcion: 'Solicitud de atención prioritaria (1 día)' },
+        { tipo_itil: 'SOLICITUD', prioridad: 'Media', tiempo_horas: 24, descripcion: 'Solicitud estándar (1 día hábil)' },
+        { tipo_itil: 'SOLICITUD', prioridad: 'Baja', tiempo_horas: 48, descripcion: 'Solicitud de baja prioridad (2 días hábiles)' },
+        // Incidencias (Nivel N2 / N3 / Administración)
+        { tipo_itil: 'INCIDENCIA', prioridad: 'Critica', tiempo_horas: 2, descripcion: 'Incidencia crítica que detiene la operación' },
+        { tipo_itil: 'INCIDENCIA', prioridad: 'Alta', tiempo_horas: 4, descripcion: 'Incidencia de alto impacto operativo' },
+        { tipo_itil: 'INCIDENCIA', prioridad: 'Media', tiempo_horas: 12, descripcion: 'Incidencia media' },
+        { tipo_itil: 'INCIDENCIA', prioridad: 'Baja', tiempo_horas: 24, descripcion: 'Incidencia menor o degradación parcial' }
+      ];
+      for (const s of defaultSla) {
+        await pool.query(
+          'INSERT IGNORE INTO configuracion_sla (tipo_itil, prioridad, tiempo_horas, descripcion) VALUES (?, ?, ?, ?)',
+          [s.tipo_itil, s.prioridad, s.tiempo_horas, s.descripcion]
+        );
+      }
+    }
 
     console.log('Database schema initialization completed.');
     await initializeE2EE();

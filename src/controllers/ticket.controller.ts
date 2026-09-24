@@ -59,6 +59,20 @@ export const escalarTicketAProveedor = async (req: AuthRequest, res: Response): 
   }
 };
 
+export const escalarTicketAAdmin = async (req: AuthRequest, res: Response): Promise<void> => {
+  const ticketId = parseInt(req.params.ticket_id);
+  try {
+    const ticket = await ticketService.escalarTicketAAdmin(ticketId, req.body || {}, req.currentUser);
+    if (!ticket) {
+      res.status(404).json({ detail: 'Ticket no encontrado' });
+      return;
+    }
+    res.json(ticket);
+  } catch (err: any) {
+    res.status(400).json({ detail: err.message || 'Error al escalar el ticket a Nivel Administración' });
+  }
+};
+
 export const escalarTicketAProyecto = async (req: AuthRequest, res: Response): Promise<void> => {
   const ticketId = parseInt(req.params.ticket_id);
   try {
@@ -103,11 +117,74 @@ export const getTicketsPaginated = async (req: AuthRequest, res: Response): Prom
     const estado = req.query.estado as string;
     const search = req.query.search as string;
     const tecnicoId = (req.query.tecnico_id as string) || (req.query.tecnicoId as string);
+    const tipoItil = (req.query.tipo_itil as string) || (req.query.tipoItil as string);
 
-    const result = await ticketService.getTicketsPaginated(req.currentUser, page, limit, excludeStatus, estado, search, tecnicoId);
+    const result = await ticketService.getTicketsPaginated(req.currentUser, page, limit, excludeStatus, estado, search, tecnicoId, tipoItil);
     res.json(result);
   } catch (error: any) {
     console.error('Error in getTicketsPaginated:', error);
     res.status(500).json({ detail: 'Error al obtener tickets paginados', error: error.message });
   }
 };
+
+export const uploadTicketFiles = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const files = req.files as Express.Multer.File[];
+    if (!files || files.length === 0) {
+      res.status(400).json({ detail: 'No se enviaron archivos para subir' });
+      return;
+    }
+
+    const etapa = (req.body.etapa as string) || 'creacion';
+    const adjuntos = files.map(file => ({
+      id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+      nombre: file.originalname,
+      url: `/uploads/tickets/${file.filename}`,
+      tipo: file.mimetype,
+      tamano: file.size,
+      fecha: new Date().toISOString(),
+      usuario: req.currentUser?.nombre_completo || 'Usuario',
+      etapa
+    }));
+
+    res.json({ adjuntos });
+  } catch (error: any) {
+    console.error('Error in uploadTicketFiles:', error);
+    res.status(500).json({ detail: 'Error al subir archivos', error: error.message });
+  }
+};
+
+export const addTicketAdjuntos = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const ticketId = parseInt(req.params.ticket_id);
+    const files = req.files as Express.Multer.File[];
+    if (!files || files.length === 0) {
+      res.status(400).json({ detail: 'No se enviaron archivos' });
+      return;
+    }
+
+    const etapa = (req.body.etapa as string) || 'seguimiento';
+    const newAdjuntos = files.map(file => ({
+      id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+      nombre: file.originalname,
+      url: `/uploads/tickets/${file.filename}`,
+      tipo: file.mimetype,
+      tamano: file.size,
+      fecha: new Date().toISOString(),
+      usuario: req.currentUser?.nombre_completo || 'Usuario',
+      etapa
+    }));
+
+    const updatedTicket = await ticketService.addAdjuntosToTicket(ticketId, newAdjuntos, req.currentUser);
+    if (!updatedTicket) {
+      res.status(404).json({ detail: 'Ticket no encontrado' });
+      return;
+    }
+
+    res.json(updatedTicket);
+  } catch (error: any) {
+    console.error('Error in addTicketAdjuntos:', error);
+    res.status(500).json({ detail: 'Error al adjuntar archivos al ticket', error: error.message });
+  }
+};
+
