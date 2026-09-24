@@ -692,7 +692,7 @@ export const escalarTicketAN2 = async (
        JOIN rol r ON u.rol_id = r.id
        LEFT JOIN usuario_sucursal us ON u.id = us.usuario_id
        LEFT JOIN sucursal s ON s.usuario_id = u.id
-       WHERE r.nombre = 'TECNICO' AND u.nivel_soporte = 'N2' AND u.grupo_n2 = ? AND u.is_active = 1
+       WHERE r.nombre = 'TECNICO' AND u.grupo_n2 = ? AND u.is_active = 1
          AND (us.sucursal_id = ? OR s.id = ?)`,
       [grupo_n2, ticket.sucursal_id, ticket.sucursal_id]
     );
@@ -707,7 +707,7 @@ export const escalarTicketAN2 = async (
        LEFT JOIN usuario_empresa ue ON u.id = ue.usuario_id
        LEFT JOIN usuario_sucursal us ON u.id = us.usuario_id
        LEFT JOIN sucursal s ON us.sucursal_id = s.id OR s.usuario_id = u.id
-       WHERE r.nombre = 'TECNICO' AND u.nivel_soporte = 'N2' AND u.grupo_n2 = ? AND u.is_active = 1
+       WHERE r.nombre = 'TECNICO' AND u.grupo_n2 = ? AND u.is_active = 1
          AND (ue.empresa_id = ? OR s.empresa_id = ?)`,
       [grupo_n2, ticket.empresa_id, ticket.empresa_id]
     );
@@ -720,7 +720,7 @@ export const escalarTicketAN2 = async (
       `SELECT u.id, u.nombre_completo, u.email 
        FROM usuario u
        JOIN rol r ON u.rol_id = r.id
-       WHERE r.nombre = 'TECNICO' AND u.nivel_soporte = 'N2' AND u.grupo_n2 = ? AND u.is_active = 1`,
+       WHERE r.nombre = 'TECNICO' AND u.grupo_n2 = ? AND u.is_active = 1`,
       [grupo_n2]
     );
     techRows = rows;
@@ -885,15 +885,18 @@ export const escalarTicketAProveedor = async (ticketId: number, currentUser: any
     usuario: currentUser.nombre_completo
   });
 
+  const n1IdToKeep = ticket.tecnico_n1_id || ticket.tecnico_id || (currentUser.rol_nombre === 'TECNICO' ? currentUser.id : null);
+
   await pool.query(
     `UPDATE ticket 
      SET nivel_soporte = 'N3', 
          estado = 'Elevado a Proveedor', 
+         tecnico_n1_id = COALESCE(?, tecnico_n1_id),
          sla_paused_at = NOW(), 
          bitacora_dinamica = ?, 
          updated_at = NOW() 
      WHERE id = ?`,
-    [JSON.stringify(bitacora), ticketId]
+    [n1IdToKeep, JSON.stringify(bitacora), ticketId]
   );
 
   if (ticket.tecnico_n1_id && ticket.tecnico_n1_id !== currentUser.id) {
@@ -1302,18 +1305,8 @@ export const getTicketsPaginated = async (
   const effectiveTipoItil = isTechN2 ? 'INCIDENCIAS' : (tipoItil || 'SOLICITUDES');
 
   if (currentUser.rol_nombre === 'TECNICO') {
-    if (isTechN2) {
-      whereClauses.push(`(t.tecnico_id = ? OR t.tecnico_n2_id = ?)`);
-      params.push(currentUser.id, currentUser.id);
-    } else {
-      if (effectiveTipoItil === 'INCIDENCIAS') {
-        whereClauses.push(`(t.tecnico_n1_id = ? OR t.creador_id = ?)`);
-        params.push(currentUser.id, currentUser.id);
-      } else {
-        whereClauses.push(`(t.tecnico_id = ? OR t.tecnico_n1_id = ? OR t.creador_id = ?)`);
-        params.push(currentUser.id, currentUser.id, currentUser.id);
-      }
-    }
+    whereClauses.push(`(t.tecnico_id = ? OR t.tecnico_n1_id = ? OR t.tecnico_n2_id = ? OR t.creador_id = ?)`);
+    params.push(currentUser.id, currentUser.id, currentUser.id, currentUser.id);
   } else if (currentUser.rol_nombre === 'USUARIO') {
     whereClauses.push(`t.creador_id = ?`);
     params.push(currentUser.id);
