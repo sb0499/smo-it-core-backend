@@ -613,18 +613,6 @@ export const createRecepcionBodega = async (req: AuthRequest, res: Response): Pr
       return;
     }
 
-    if (req.currentUser.rol_nombre === 'TECNICO') {
-      const assigned = await getAssignedSucursales(req.currentUser.id);
-      if (req.body.sucursal_id && assigned.sucursalIds.length > 0 && !assigned.sucursalIds.includes(Number(req.body.sucursal_id))) {
-        res.status(403).json({ detail: 'No tienes autorización para registrar recepciones en esta sucursal.' });
-        return;
-      }
-      if (req.body.empresa_id && assigned.empresaIds.length > 0 && !assigned.empresaIds.includes(Number(req.body.empresa_id))) {
-        res.status(403).json({ detail: 'No tienes autorización para registrar recepciones en esta sede.' });
-        return;
-      }
-    }
-
     const recepcion = await inventarioService.createRecepcionBodega(req.body, req.currentUser.id);
     res.status(201).json(recepcion);
   } catch (error: any) {

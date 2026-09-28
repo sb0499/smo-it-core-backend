@@ -14,7 +14,8 @@ const getAssignedEmpresas = async (usuarioId: number): Promise<number[]> => {
 export const getBodegas = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     let empresaIds: number[] | undefined = undefined;
-    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
+    const includeAll = req.query.all === 'true' || req.query.todas === 'true';
+    if (!includeAll && req.currentUser && req.currentUser.rol_nombre === 'TECNICO') {
       const allowed = await getAssignedEmpresas(req.currentUser.id);
       if (req.query.empresa_id) {
         const sel = parseInt(req.query.empresa_id as string);
