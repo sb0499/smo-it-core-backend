@@ -13,13 +13,7 @@ function renderActaHeaderLogos(
   const topY = options.topY ?? 25;
   const logoWidth = options.logoWidth ?? 150;
 
-  // 1. Esquina superior derecha: logo-shopping.png (fijo)
-  const shoppingLogoPath = path.join(__dirname, '..', 'assets', 'logo-shopping.png');
-  if (fs.existsSync(shoppingLogoPath)) {
-    doc.image(shoppingLogoPath, rightX, topY, { width: logoWidth });
-  }
-
-  // 2. Esquina superior izquierda: logo-nombresede.png si existe (si no existe se deja vacío)
+  // 1. Limpieza de nombre de sede
   const cleanSedeName = String(empresaNombre || '')
     .toLowerCase()
     .normalize("NFD")
@@ -27,11 +21,28 @@ function renderActaHeaderLogos(
     .replace(/\s+/g, '-')
     .replace(/[^a-z0-9\-]/g, '');
 
+  const isOmitCorporateLogo = cleanSedeName === 'el-teatro' || cleanSedeName === 'teatro' || cleanSedeName.includes('teatro');
+
+  // 2. Esquina superior derecha: logo-shopping.png (fijo excepto si es una entidad independiente como El Teatro)
+  if (!isOmitCorporateLogo) {
+    const shoppingLogoPath = path.join(__dirname, '..', 'assets', 'logo-shopping.png');
+    if (fs.existsSync(shoppingLogoPath)) {
+      doc.image(shoppingLogoPath, rightX, topY, { width: logoWidth });
+    }
+  }
+
+  // 3. Esquina superior izquierda: logo-nombresede.png si existe
   const isShoppingMain = !cleanSedeName || cleanSedeName === 'shopping' || cleanSedeName === 'shopping-managements';
-  const specificLogoPath = path.join(__dirname, '..', 'assets', `logo-${cleanSedeName}.png`);
+  let specificLogoPath = path.join(__dirname, '..', 'assets', `logo-${cleanSedeName}.png`);
+  if (!fs.existsSync(specificLogoPath) && cleanSedeName.includes('teatro')) {
+    const alt1 = path.join(__dirname, '..', 'assets', 'logo-el-teatro.png');
+    const alt2 = path.join(__dirname, '..', 'assets', 'logo-teatro.png');
+    if (fs.existsSync(alt1)) specificLogoPath = alt1;
+    else if (fs.existsSync(alt2)) specificLogoPath = alt2;
+  }
 
   if (!isShoppingMain && fs.existsSync(specificLogoPath)) {
-    doc.image(specificLogoPath, leftX, topY, { fit: [120, 65] });
+    doc.image(specificLogoPath, leftX, topY, { fit: [140, 68] });
   }
 
   // Desplazar Y debajo de los logos para evitar que el texto o fecha se solapen con las imágenes

@@ -27,7 +27,8 @@ empresasRouter.get('/', requireAuth, async (req: AuthRequest, res: Response) => 
     `;
     const params: any[] = [];
 
-    if (req.currentUser && req.currentUser.rol_nombre === 'TECNICO' && req.currentUser.nivel_soporte === 'N1') {
+    const includeAll = req.query.all === 'true' || req.query.todas === 'true';
+    if (!includeAll && req.currentUser && req.currentUser.rol_nombre === 'TECNICO' && req.currentUser.nivel_soporte === 'N1') {
       query += ` WHERE e.id IN (SELECT empresa_id FROM usuario_empresa WHERE usuario_id = ?)`;
       params.push(req.currentUser.id);
     }

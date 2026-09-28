@@ -106,36 +106,7 @@ export const generarActaCredenciales = (entrega: any, version: 'usuario' | 'ti')
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    // 1. Esquina superior derecha: logo-shopping.png (fijo)
-    const defaultLogoPath = path.join(__dirname, '..', 'assets', 'logo-shopping.png');
-    if (fs.existsSync(defaultLogoPath)) {
-      doc.image(defaultLogoPath, 395, 25, { width: 150 });
-    } else {
-      doc.save();
-      doc.fillColor('#304d69'); // Slate blue of shoppingmanagements logo
-      doc.moveTo(435, 45)
-         .lineTo(535, 45)
-         .lineTo(538, 40)
-         .lineTo(545, 75)
-         .lineTo(542, 80)
-         .lineTo(532, 80)
-         .lineTo(432, 80)
-         .lineTo(428, 80)
-         .lineTo(425, 75)
-         .lineTo(430, 40)
-         .lineTo(435, 45)
-         .closePath()
-         .fill();
-
-      // Ribbon logo text
-      doc.fillColor('#ffffff')
-         .fontSize(8.5)
-         .font('Helvetica-Bold')
-         .text('shoppingmanagements', 435, 58, { width: 97, align: 'center' });
-      doc.restore();
-    }
-
-    // 2. Esquina superior izquierda: logo-nombresede.png si existe (si no existe se deja vacío)
+    // 1. Limpieza de nombre de sede
     const cleanCompanyName = String(entrega.empresa_nombre || '')
       .toLowerCase()
       .normalize("NFD")
@@ -143,11 +114,51 @@ export const generarActaCredenciales = (entrega: any, version: 'usuario' | 'ti')
       .replace(/\s+/g, '-')
       .replace(/[^a-z0-9\-]/g, '');
 
+    const isOmitCorporateLogo = cleanCompanyName === 'el-teatro' || cleanCompanyName === 'teatro' || cleanCompanyName.includes('teatro');
+
+    // 2. Esquina superior derecha: logo-shopping.png (fijo excepto si es una entidad independiente como El Teatro)
+    if (!isOmitCorporateLogo) {
+      const defaultLogoPath = path.join(__dirname, '..', 'assets', 'logo-shopping.png');
+      if (fs.existsSync(defaultLogoPath)) {
+        doc.image(defaultLogoPath, 395, 25, { width: 150 });
+      } else {
+        doc.save();
+        doc.fillColor('#304d69'); // Slate blue of shoppingmanagements logo
+        doc.moveTo(435, 45)
+           .lineTo(535, 45)
+           .lineTo(538, 40)
+           .lineTo(545, 75)
+           .lineTo(542, 80)
+           .lineTo(532, 80)
+           .lineTo(432, 80)
+           .lineTo(428, 80)
+           .lineTo(425, 75)
+           .lineTo(430, 40)
+           .lineTo(435, 45)
+           .closePath()
+           .fill();
+
+        // Ribbon logo text
+        doc.fillColor('#ffffff')
+           .fontSize(8.5)
+           .font('Helvetica-Bold')
+           .text('shoppingmanagements', 435, 58, { width: 97, align: 'center' });
+        doc.restore();
+      }
+    }
+
+    // 3. Esquina superior izquierda: logo-nombresede.png si existe
     const isShoppingMain = !cleanCompanyName || cleanCompanyName === 'shopping' || cleanCompanyName === 'shopping-managements';
-    const specificLogoPath = path.join(__dirname, '..', 'assets', `logo-${cleanCompanyName}.png`);
+    let specificLogoPath = path.join(__dirname, '..', 'assets', `logo-${cleanCompanyName}.png`);
+    if (!fs.existsSync(specificLogoPath) && cleanCompanyName.includes('teatro')) {
+      const alt1 = path.join(__dirname, '..', 'assets', 'logo-el-teatro.png');
+      const alt2 = path.join(__dirname, '..', 'assets', 'logo-teatro.png');
+      if (fs.existsSync(alt1)) specificLogoPath = alt1;
+      else if (fs.existsSync(alt2)) specificLogoPath = alt2;
+    }
 
     if (!isShoppingMain && fs.existsSync(specificLogoPath)) {
-      doc.image(specificLogoPath, 50, 25, { fit: [120, 65] });
+      doc.image(specificLogoPath, 50, 25, { fit: [140, 68] });
     }
 
     // Safe Date Parsing for top header date
