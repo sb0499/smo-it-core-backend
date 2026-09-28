@@ -3,14 +3,24 @@ import { AuthRequest } from '../middlewares/auth.middleware';
 import { pool } from '../db/connection';
 import { RowDataPacket } from 'mysql2';
 import ExcelJS from 'exceljs';
+import { formatearFechaEcuador, getFechaHoraActualEcuador } from '../utils/date.utils';
 
 export const exportTickets = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { start_date, end_date, tecnico_id } = req.query;
     let query = `
-      SELECT t.id, t.titulo, t.estado, t.prioridad, t.created_at, t.updated_at,
-             c.nombre_completo as creador, a.nombre_completo as tecnico
+      SELECT t.id, t.titulo, t.descripcion, t.categoria, t.prioridad, t.estado, 
+             t.nivel_soporte, t.grupo_n2, t.area_solicitante, t.persona_solicitante, 
+             t.medio_solicitud, t.created_at, t.updated_at,
+             emp.nombre AS empresa_nombre,
+             suc.nombre AS sucursal_nombre,
+             c.nombre_completo AS creador_nombre,
+             a.id AS tecnico_id,
+             a.nombre_completo AS tecnico_nombre,
+             a.email AS tecnico_email
       FROM ticket t
+      LEFT JOIN empresa emp ON t.empresa_id = emp.id
+      LEFT JOIN sucursal suc ON t.sucursal_id = suc.id
       LEFT JOIN usuario c ON t.creador_id = c.id
       LEFT JOIN usuario a ON t.tecnico_id = a.id
       WHERE 1=1
@@ -26,7 +36,7 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
       params.push(end_date);
     }
 
-    if (req.currentUser.rol_nombre === 'ADMIN') {
+    if (req.currentUser.rol_nombre === 'ADMIN' || req.currentUser.rol_nombre === 'SUPERVISOR') {
       if (tecnico_id) {
         query += ` AND t.tecnico_id = ?`;
         params.push(tecnico_id);
@@ -39,44 +49,356 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
       params.push(req.currentUser.id);
     }
 
+    query += ` ORDER BY t.id DESC`;
+
     const [tickets] = await pool.query<RowDataPacket[]>(query, params);
 
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Reporte de Tickets');
+    // Obtener nombre del técnico filtrado si aplica
+    let tecnicoFiltradoNombre = 'Todos los Especialistas (Global)';
+    if (tecnico_id) {
+      const [techRes] = await pool.query<RowDataPacket[]>(
+        `SELECT nombre_completo FROM usuario WHERE id = ?`,
+        [tecnico_id]
+      );
+      if (techRes.length > 0) {
+        tecnicoFiltradoNombre = techRes[0].nombre_completo;
+      }
+    }
 
-    worksheet.columns = [
-      { header: 'ID', key: 'id', width: 10 },
-      { header: 'Título', key: 'titulo', width: 40 },
-      { header: 'Estado', key: 'estado', width: 15 },
-      { header: 'Prioridad', key: 'prioridad', width: 15 },
-      { header: 'Fecha Creación', key: 'created_at', width: 20 },
-      { header: 'Fecha Actualización', key: 'updated_at', width: 20 },
-      { header: 'Creador', key: 'creador', width: 25 },
-      { header: 'Técnico', key: 'tecnico', width: 25 }
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'TISMO - IT CORE SYSTEM';
+    workbook.created = new Date();
+
+    // =========================================================================
+    // HOJA 1: RESUMEN GENERAL CONSOLIDADO
+    // =========================================================================
+    const ws = workbook.addWorksheet('Resumen de Tickets', {
+      views: [{ showGridLines: true }]
+    });
+
+    // 1. Banner Corporativo Superior
+    ws.mergeCells('A2:M2');
+    const titleCell = ws.getCell('A2');
+    titleCell.value = 'TISMO • REPORTE GENERAL DE SOPORTE & GESTIÓN DE TICKETS TI';
+    titleCell.font = { name: 'Arial', size: 15, bold: true, color: { argb: 'FFFFFFFF' } };
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+    ws.getRow(2).height = 34;
+
+    // 2. Subtítulo con filtros y fecha
+    ws.mergeCells('A3:M3');
+    const subtitleCell = ws.getCell('A3');
+    const filtroFechaStr = `Filtro: ${start_date ? `Desde ${start_date}` : 'Inicio Histórico'} ${end_date ? `Hasta ${end_date}` : 'Hasta la actualidad'}`;
+    subtitleCell.value = `${filtroFechaStr}  |  Especialista: ${tecnicoFiltradoNombre}  |  Generado: ${getFechaHoraActualEcuador()}`;
+    subtitleCell.font = { name: 'Arial', size: 9.5, italic: true, color: { argb: 'FFFFFFFF' } };
+    subtitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    subtitleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+    ws.getRow(3).height = 22;
+
+    // Métricas KPI
+    const totalCount = tickets.length;
+    const resueltosCount = tickets.filter(t => t.estado === 'Finalizada' || t.estado === 'Resuelto').length;
+    const enProcesoCount = tickets.filter(t => t.estado === 'En Proceso' || t.estado === 'Pruebas').length;
+    const nuevosCount = tickets.filter(t => t.estado === 'Nuevo' || t.estado === 'Pendiente').length;
+    const escaladosCount = tickets.filter(t => t.estado && t.estado.includes('Escalado')).length;
+    const criticosCount = tickets.filter(t => t.prioridad === 'Critica' || t.prioridad === 'Alta').length;
+
+    const kpis = [
+      { label: 'Total Tickets', val: totalCount, color: 'FF2563EB' },
+      { label: 'Resueltos / Cerrados', val: resueltosCount, color: 'FF059669' },
+      { label: 'En Proceso / Pruebas', val: enProcesoCount, color: 'FF0284C7' },
+      { label: 'Nuevos / Pendientes', val: nuevosCount, color: 'FFD97706' },
+      { label: 'Escalados (N2/N3)', val: escaladosCount, color: 'FF7C3AED' },
+      { label: 'Críticos / Alta', val: criticosCount, color: 'FFDC2626' }
     ];
 
-    worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+    ws.getRow(5).height = 18;
+    ws.getRow(6).height = 26;
 
-    for (const t of tickets) {
-      worksheet.addRow({
-        id: t.id,
-        titulo: t.titulo,
-        estado: t.estado,
-        prioridad: t.prioridad,
-        created_at: new Date(t.created_at).toLocaleString(),
-        updated_at: t.updated_at ? new Date(t.updated_at).toLocaleString() : '',
-        creador: t.creador || 'N/A',
-        tecnico: t.tecnico || 'Sin asignar'
-      });
+    // Renderizar tarjetas KPI en pares de columnas
+    kpis.forEach((kpi, idx) => {
+      const col = idx * 2 + 1; // A, C, E, G, I, K
+      const colNext = col + 1;
+      
+      ws.mergeCells(5, col, 5, colNext);
+      const labelCell = ws.getCell(5, col);
+      labelCell.value = kpi.label;
+      labelCell.font = { name: 'Arial', size: 9, bold: true, color: { argb: 'FF475569' } };
+      labelCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+      labelCell.border = { top: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
+
+      ws.mergeCells(6, col, 6, colNext);
+      const valCell = ws.getCell(6, col);
+      valCell.value = kpi.val;
+      valCell.font = { name: 'Arial', size: 14, bold: true, color: { argb: kpi.color } };
+      valCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      valCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+      valCell.border = { bottom: { style: 'medium', color: { argb: kpi.color } }, left: { style: 'thin' }, right: { style: 'thin' } };
+    });
+
+    // 3. Título de la tabla
+    ws.mergeCells('A8:M8');
+    const tableTitle = ws.getCell('A8');
+    tableTitle.value = 'DETALLE DE TICKETS Y CASOS DE SOPORTE';
+    tableTitle.font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FF0F172A' } };
+    tableTitle.alignment = { vertical: 'middle' };
+    ws.getRow(8).height = 24;
+
+    // 4. Cabeceras de la tabla
+    const headers = [
+      'ID',
+      'Tipo ITIL / Cat.',
+      'Nivel',
+      'Sede / Empresa',
+      'Sucursal',
+      'Requerimiento / Asunto',
+      'Solicitante',
+      'Área',
+      'Medio',
+      'Prioridad',
+      'Estado Actual',
+      'Especialista Asignado',
+      'Fecha Creación'
+    ];
+
+    const hRow = ws.getRow(9);
+    hRow.height = 26;
+    headers.forEach((h, idx) => {
+      const c = hRow.getCell(idx + 1);
+      c.value = h;
+      c.font = { name: 'Arial', size: 9.5, bold: true, color: { argb: 'FFFFFFFF' } };
+      c.alignment = { horizontal: 'center', vertical: 'middle' };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+      c.border = { top: { style: 'thin' }, bottom: { style: 'medium' }, left: { style: 'thin' }, right: { style: 'thin' } };
+    });
+
+    // 5. Filas de datos
+    let currentRowNum = 10;
+    if (tickets.length === 0) {
+      ws.mergeCells('A10:M10');
+      const emptyCell = ws.getCell('A10');
+      emptyCell.value = 'No se encontraron tickets registrados con los filtros seleccionados.';
+      emptyCell.font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF64748B' } };
+      emptyCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      ws.getRow(10).height = 30;
+    } else {
+      for (const t of tickets) {
+        const row = ws.getRow(currentRowNum);
+        row.height = 24;
+        const isZebra = currentRowNum % 2 === 0;
+        const bgColor = isZebra ? 'FFFFFFFF' : 'FFF8FAFC';
+
+        // Color condicional según el estado
+        let estadoColor = 'FF334155';
+        if (t.estado === 'Finalizada' || t.estado === 'Resuelto') estadoColor = 'FF059669';
+        else if (t.estado === 'En Proceso' || t.estado === 'Pruebas') estadoColor = 'FF2563EB';
+        else if (t.estado && t.estado.includes('Escalado')) estadoColor = 'FF7C3AED';
+        else if (t.estado === 'Nuevo' || t.estado === 'Pendiente') estadoColor = 'FFD97706';
+
+        // Color condicional según prioridad
+        let prioColor = 'FF475569';
+        if (t.prioridad === 'Critica' || t.prioridad === 'Alta') prioColor = 'FFDC2626';
+        else if (t.prioridad === 'Media') prioColor = 'FFD97706';
+        else if (t.prioridad === 'Baja') prioColor = 'FF059669';
+
+        const rowValues = [
+          `#${t.id}`,
+          t.categoria || 'Soporte',
+          t.grupo_n2 ? `${t.nivel_soporte || 'N1'} (${t.grupo_n2})` : (t.nivel_soporte || 'N1'),
+          t.empresa_nombre || 'General',
+          t.sucursal_nombre || 'Matriz',
+          t.titulo || 'Sin título',
+          t.persona_solicitante || t.creador_nombre || 'N/A',
+          t.area_solicitante || 'General',
+          t.medio_solicitud || 'Plataforma',
+          t.prioridad || 'Media',
+          t.estado || 'Nuevo',
+          t.tecnico_nombre || 'Sin asignar',
+          formatearFechaEcuador(t.created_at)
+        ];
+
+        rowValues.forEach((v, idx) => {
+          const cell = row.getCell(idx + 1);
+          cell.value = v;
+          cell.font = {
+            name: 'Arial',
+            size: 9,
+            bold: idx === 0 || idx === 9 || idx === 10,
+            color: idx === 9 ? { argb: prioColor } : idx === 10 ? { argb: estadoColor } : { argb: 'FF1E293B' }
+          };
+          cell.alignment = {
+            horizontal: (idx === 5 || idx === 6) ? 'left' : 'center',
+            vertical: 'middle'
+          };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+          };
+        });
+
+        currentRowNum++;
+      }
+    }
+
+    // Configuración de anchos de columna
+    ws.getColumn(1).width = 10;  // ID
+    ws.getColumn(2).width = 18;  // Tipo / Cat
+    ws.getColumn(3).width = 16;  // Nivel
+    ws.getColumn(4).width = 24;  // Empresa
+    ws.getColumn(5).width = 18;  // Sucursal
+    ws.getColumn(6).width = 38;  // Requerimiento
+    ws.getColumn(7).width = 24;  // Solicitante
+    ws.getColumn(8).width = 18;  // Área
+    ws.getColumn(9).width = 15;  // Medio
+    ws.getColumn(10).width = 14; // Prioridad
+    ws.getColumn(11).width = 18; // Estado
+    ws.getColumn(12).width = 25; // Especialista
+    ws.getColumn(13).width = 20; // Fecha
+
+    // =========================================================================
+    // HOJAS ADICIONALES: PESTAÑAS INDIVIDUALES SI HAY VARIOS ESPECIALISTAS
+    // =========================================================================
+    if (!tecnico_id && tickets.length > 0) {
+      // Agrupar tickets por técnico
+      const tecMap = new Map<number, { nombre: string; email: string; tickets: typeof tickets }>();
+      for (const t of tickets) {
+        if (t.tecnico_id) {
+          if (!tecMap.has(t.tecnico_id)) {
+            tecMap.set(t.tecnico_id, {
+              nombre: t.tecnico_nombre || `Técnico #${t.tecnico_id}`,
+              email: t.tecnico_email || '',
+              tickets: []
+            });
+          }
+          tecMap.get(t.tecnico_id)!.tickets.push(t);
+        }
+      }
+
+      for (const [, tecData] of tecMap) {
+        const sanitizedSheetName = tecData.nombre
+          .replace(/[\\/?*:[\]]/g, '')
+          .trim()
+          .substring(0, 28);
+
+        const wsTec = workbook.addWorksheet(sanitizedSheetName, {
+          views: [{ showGridLines: true }]
+        });
+
+        // Banner del especialista
+        wsTec.mergeCells('A1:J1');
+        const tecBanner = wsTec.getCell('A1');
+        tecBanner.value = `TISMO • TICKETS DEL ESPECIALISTA: ${tecData.nombre.toUpperCase()}`;
+        tecBanner.font = { name: 'Arial', size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
+        tecBanner.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+        tecBanner.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+        wsTec.getRow(1).height = 28;
+
+        // Sub-banner
+        wsTec.mergeCells('A2:J2');
+        const tecSub = wsTec.getCell('A2');
+        tecSub.value = `Total Casos Asignados: ${tecData.tickets.length}  |  Resueltos: ${tecData.tickets.filter(x => x.estado === 'Finalizada' || x.estado === 'Resuelto').length}  |  En Proceso: ${tecData.tickets.filter(x => x.estado === 'En Proceso' || x.estado === 'Pruebas').length}  |  Correo: ${tecData.email || 'N/A'}`;
+        tecSub.font = { name: 'Arial', size: 9, color: { argb: 'FFFFFFFF' } };
+        tecSub.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+        tecSub.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+        wsTec.getRow(2).height = 20;
+
+        // Headers de la pestaña
+        const tecHeaders = [
+          'ID',
+          'Tipo / Cat.',
+          'Sede',
+          'Requerimiento',
+          'Solicitante',
+          'Área',
+          'Prioridad',
+          'Estado',
+          'Fecha Creación',
+          'Última Modificación'
+        ];
+
+        const tecHRow = wsTec.getRow(4);
+        tecHRow.height = 24;
+        tecHeaders.forEach((h, idx) => {
+          const c = tecHRow.getCell(idx + 1);
+          c.value = h;
+          c.font = { name: 'Arial', size: 9, bold: true, color: { argb: 'FFFFFFFF' } };
+          c.alignment = { horizontal: 'center', vertical: 'middle' };
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+          c.border = { top: { style: 'thin' }, bottom: { style: 'medium' }, left: { style: 'thin' }, right: { style: 'thin' } };
+        });
+
+        let tRow = 5;
+        for (const item of tecData.tickets) {
+          const r = wsTec.getRow(tRow);
+          r.height = 22;
+          const bgZebra = tRow % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC';
+
+          let stCol = 'FF334155';
+          if (item.estado === 'Finalizada' || item.estado === 'Resuelto') stCol = 'FF059669';
+          else if (item.estado === 'En Proceso') stCol = 'FF2563EB';
+
+          const vals = [
+            `#${item.id}`,
+            item.categoria || 'Soporte',
+            item.empresa_nombre || 'General',
+            item.titulo,
+            item.persona_solicitante || item.creador_nombre || 'N/A',
+            item.area_solicitante || 'General',
+            item.prioridad,
+            item.estado,
+            formatearFechaEcuador(item.created_at),
+            formatearFechaEcuador(item.updated_at)
+          ];
+
+          vals.forEach((v, idx) => {
+            const cell = r.getCell(idx + 1);
+            cell.value = v;
+            cell.font = {
+              name: 'Arial',
+              size: 9,
+              bold: idx === 0 || idx === 7,
+              color: idx === 7 ? { argb: stCol } : { argb: 'FF1E293B' }
+            };
+            cell.alignment = {
+              horizontal: (idx === 3 || idx === 4) ? 'left' : 'center',
+              vertical: 'middle'
+            };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgZebra } };
+            cell.border = {
+              top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+              bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+              left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+              right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+            };
+          });
+
+          tRow++;
+        }
+
+        wsTec.getColumn(1).width = 10;
+        wsTec.getColumn(2).width = 16;
+        wsTec.getColumn(3).width = 22;
+        wsTec.getColumn(4).width = 36;
+        wsTec.getColumn(5).width = 24;
+        wsTec.getColumn(6).width = 18;
+        wsTec.getColumn(7).width = 14;
+        wsTec.getColumn(8).width = 16;
+        wsTec.getColumn(9).width = 18;
+        wsTec.getColumn(10).width = 18;
+      }
     }
 
     res.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.attachment('reporte_tickets.xlsx');
+    res.attachment(`reporte_tickets_${start_date || 'inicio'}_${end_date || 'actual'}.xlsx`);
     await workbook.xlsx.write(res);
     res.end();
   } catch (error: any) {
-    res.status(500).json({ detail: error.message });
+    console.error('Error al exportar reporte de tickets:', error);
+    res.status(500).json({ detail: error.message || 'Error al generar reporte de tickets' });
   }
 };
 
@@ -84,10 +406,19 @@ export const exportProyectos = async (req: AuthRequest, res: Response): Promise<
   try {
     const { start_date, end_date, tecnico_id } = req.query;
     let query = `
-      SELECT p.id, p.nombre, p.estado, p.tipo_proyecto, p.avance_porcentaje, p.created_at, p.fecha_fin_estimada,
-             c.nombre_completo as creador
+      SELECT p.id, p.nombre, p.descripcion, p.estado, p.tipo_proyecto, p.avance_porcentaje,
+             p.fecha_inicio, p.fecha_fin_estimada, p.created_at,
+             c.nombre_completo AS creador_nombre,
+             COUNT(DISTINCT tp.id) AS total_tareas,
+             SUM(CASE WHEN tp.estado = 'Finalizado' THEN 1 ELSE 0 END) AS tareas_finalizadas,
+             SUM(CASE WHEN tp.estado = 'En Proceso' THEN 1 ELSE 0 END) AS tareas_en_proceso,
+             COUNT(DISTINCT tc.usuario_id) AS total_miembros
       FROM proyecto p
       LEFT JOIN usuario c ON p.creador_id = c.id
+      LEFT JOIN tarea_proyecto tp ON p.id = tp.proyecto_id
+      LEFT JOIN (
+        SELECT proyecto_id, responsable_id AS usuario_id FROM tarea_proyecto
+      ) tc ON p.id = tc.proyecto_id
       WHERE 1=1
     `;
     const params: any[] = [];
@@ -101,7 +432,7 @@ export const exportProyectos = async (req: AuthRequest, res: Response): Promise<
       params.push(end_date);
     }
 
-    if (req.currentUser.rol_nombre === 'ADMIN') {
+    if (req.currentUser.rol_nombre === 'ADMIN' || req.currentUser.rol_nombre === 'SUPERVISOR') {
       if (tecnico_id) {
         query += ` AND p.id IN (SELECT proyecto_id FROM tarea_proyecto WHERE responsable_id = ?)`;
         params.push(tecnico_id);
@@ -114,43 +445,199 @@ export const exportProyectos = async (req: AuthRequest, res: Response): Promise<
       params.push(req.currentUser.id);
     }
 
+    query += ` GROUP BY p.id ORDER BY p.id DESC`;
+
     const [proyectos] = await pool.query<RowDataPacket[]>(query, params);
 
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Reporte de Proyectos');
+    workbook.creator = 'TISMO - IT CORE SYSTEM';
+    workbook.created = new Date();
 
-    worksheet.columns = [
-      { header: 'ID', key: 'id', width: 10 },
-      { header: 'Nombre', key: 'nombre', width: 40 },
-      { header: 'Estado', key: 'estado', width: 15 },
-      { header: 'Tipo Proyecto', key: 'tipo', width: 20 },
-      { header: 'Avance (%)', key: 'avance', width: 12 },
-      { header: 'Fecha Creación', key: 'created_at', width: 20 },
-      { header: 'Fecha Fin Estimada', key: 'fecha_fin', width: 20 },
-      { header: 'Creador', key: 'creador', width: 25 }
+    // =========================================================================
+    // HOJA 1: RESUMEN DE PROYECTOS Y PLANIFICACIÓN
+    // =========================================================================
+    const ws = workbook.addWorksheet('Resumen de Proyectos', {
+      views: [{ showGridLines: true }]
+    });
+
+    // 1. Banner Corporativo Superior
+    ws.mergeCells('A2:L2');
+    const titleCell = ws.getCell('A2');
+    titleCell.value = 'TISMO • REPORTE GENERAL DE PROYECTOS Y PLANIFICACIÓN TI';
+    titleCell.font = { name: 'Arial', size: 15, bold: true, color: { argb: 'FFFFFFFF' } };
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+    ws.getRow(2).height = 34;
+
+    // 2. Subtítulo con filtros y fecha
+    ws.mergeCells('A3:L3');
+    const subtitleCell = ws.getCell('A3');
+    const filtroFechaStr = `Filtro: ${start_date ? `Desde ${start_date}` : 'Inicio Histórico'} ${end_date ? `Hasta ${end_date}` : 'Hasta la actualidad'}`;
+    subtitleCell.value = `${filtroFechaStr}  |  Generado: ${getFechaHoraActualEcuador()}`;
+    subtitleCell.font = { name: 'Arial', size: 9.5, italic: true, color: { argb: 'FFFFFFFF' } };
+    subtitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    subtitleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+    ws.getRow(3).height = 22;
+
+    // Métricas KPI
+    const totalProj = proyectos.length;
+    const finalizadosProj = proyectos.filter(p => p.estado === 'Finalizado').length;
+    const enProcesoProj = proyectos.filter(p => p.estado === 'En Proceso' || p.estado === 'Pruebas').length;
+    const sinIniciarProj = proyectos.filter(p => p.estado === 'Sin Iniciar' || p.estado === 'Stand By').length;
+    const totalTareasCount = proyectos.reduce((acc, p) => acc + Number(p.total_tareas || 0), 0);
+    const avgAvance = totalProj > 0 ? Math.round(proyectos.reduce((acc, p) => acc + Number(p.avance_porcentaje || 0), 0) / totalProj) : 0;
+
+    const kpis = [
+      { label: 'Total Proyectos', val: totalProj, color: 'FF2563EB' },
+      { label: 'En Proceso / Pruebas', val: enProcesoProj, color: 'FF0284C7' },
+      { label: 'Finalizados', val: finalizadosProj, color: 'FF059669' },
+      { label: 'Stand By / Sin Iniciar', val: sinIniciarProj, color: 'FFD97706' },
+      { label: 'Total Tareas', val: totalTareasCount, color: 'FF7C3AED' },
+      { label: 'Avance Promedio', val: `${avgAvance}%`, color: 'FF0D9488' }
     ];
 
-    worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF10B981' } };
+    ws.getRow(5).height = 18;
+    ws.getRow(6).height = 26;
 
-    for (const p of proyectos) {
-      worksheet.addRow({
-        id: p.id,
-        nombre: p.nombre,
-        estado: p.estado,
-        tipo: p.tipo_proyecto,
-        avance: p.avance_porcentaje,
-        created_at: new Date(p.created_at).toLocaleString(),
-        fecha_fin: new Date(p.fecha_fin_estimada).toLocaleDateString(),
-        creador: p.creador || 'N/A'
-      });
+    kpis.forEach((kpi, idx) => {
+      const col = idx * 2 + 1;
+      const colNext = col + 1;
+      
+      ws.mergeCells(5, col, 5, colNext);
+      const labelCell = ws.getCell(5, col);
+      labelCell.value = kpi.label;
+      labelCell.font = { name: 'Arial', size: 9, bold: true, color: { argb: 'FF475569' } };
+      labelCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+      labelCell.border = { top: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
+
+      ws.mergeCells(6, col, 6, colNext);
+      const valCell = ws.getCell(6, col);
+      valCell.value = kpi.val;
+      valCell.font = { name: 'Arial', size: 14, bold: true, color: { argb: kpi.color } };
+      valCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      valCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+      valCell.border = { bottom: { style: 'medium', color: { argb: kpi.color } }, left: { style: 'thin' }, right: { style: 'thin' } };
+    });
+
+    // 3. Título de la tabla matriz
+    ws.mergeCells('A8:L8');
+    const tableTitle = ws.getCell('A8');
+    tableTitle.value = 'MATRIZ DE SEGUIMIENTO Y AVANCE DE PROYECTOS';
+    tableTitle.font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FF0F172A' } };
+    tableTitle.alignment = { vertical: 'middle' };
+    ws.getRow(8).height = 24;
+
+    // 4. Cabeceras de la tabla
+    const headers = [
+      'ID',
+      'Nombre del Proyecto',
+      'Tipo / Categoría',
+      'Estado',
+      'Avance',
+      'Líder / Creador',
+      'Fecha Inicio',
+      'Fecha Fin Estimada',
+      'Tareas Totales',
+      'Tareas Finalizadas',
+      'Tareas En Proceso',
+      'Descripción / Alcance'
+    ];
+
+    const hRow = ws.getRow(9);
+    hRow.height = 26;
+    headers.forEach((h, idx) => {
+      const c = hRow.getCell(idx + 1);
+      c.value = h;
+      c.font = { name: 'Arial', size: 9.5, bold: true, color: { argb: 'FFFFFFFF' } };
+      c.alignment = { horizontal: 'center', vertical: 'middle' };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+      c.border = { top: { style: 'thin' }, bottom: { style: 'medium' }, left: { style: 'thin' }, right: { style: 'thin' } };
+    });
+
+    // 5. Filas de datos
+    let currentRowNum = 10;
+    if (proyectos.length === 0) {
+      ws.mergeCells('A10:L10');
+      const emptyCell = ws.getCell('A10');
+      emptyCell.value = 'No se encontraron proyectos registrados con los filtros seleccionados.';
+      emptyCell.font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF64748B' } };
+      emptyCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      ws.getRow(10).height = 30;
+    } else {
+      for (const p of proyectos) {
+        const row = ws.getRow(currentRowNum);
+        row.height = 24;
+        const isZebra = currentRowNum % 2 === 0;
+        const bgColor = isZebra ? 'FFFFFFFF' : 'FFF8FAFC';
+
+        let estadoColor = 'FF334155';
+        if (p.estado === 'Finalizado') estadoColor = 'FF059669';
+        else if (p.estado === 'En Proceso') estadoColor = 'FF2563EB';
+        else if (p.estado === 'Pruebas') estadoColor = 'FF7C3AED';
+        else if (p.estado === 'Sin Iniciar' || p.estado === 'Stand By') estadoColor = 'FFD97706';
+
+        const rowValues = [
+          `#${p.id}`,
+          p.nombre,
+          p.tipo_proyecto || 'General',
+          p.estado,
+          `${p.avance_porcentaje || 0}%`,
+          p.creador_nombre || 'N/A',
+          formatearFechaEcuador(p.fecha_inicio, false),
+          formatearFechaEcuador(p.fecha_fin_estimada, false),
+          p.total_tareas || 0,
+          p.tareas_finalizadas || 0,
+          p.tareas_en_proceso || 0,
+          p.descripcion || 'Sin descripción'
+        ];
+
+        rowValues.forEach((v, idx) => {
+          const cell = row.getCell(idx + 1);
+          cell.value = v;
+          cell.font = {
+            name: 'Arial',
+            size: 9,
+            bold: idx === 0 || idx === 3 || idx === 4,
+            color: idx === 3 ? { argb: estadoColor } : { argb: 'FF1E293B' }
+          };
+          cell.alignment = {
+            horizontal: (idx === 1 || idx === 5 || idx === 11) ? 'left' : 'center',
+            vertical: 'middle'
+          };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+          };
+        });
+
+        currentRowNum++;
+      }
     }
 
+    // Configuración de anchos de columna
+    ws.getColumn(1).width = 10;  // ID
+    ws.getColumn(2).width = 34;  // Nombre
+    ws.getColumn(3).width = 18;  // Tipo
+    ws.getColumn(4).width = 16;  // Estado
+    ws.getColumn(5).width = 12;  // Avance
+    ws.getColumn(6).width = 24;  // Creador
+    ws.getColumn(7).width = 16;  // Fecha Inicio
+    ws.getColumn(8).width = 18;  // Fecha Fin
+    ws.getColumn(9).width = 14;  // Tareas Totales
+    ws.getColumn(10).width = 16; // Finalizadas
+    ws.getColumn(11).width = 16; // En Proceso
+    ws.getColumn(12).width = 38; // Descripción
+
     res.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.attachment('reporte_proyectos.xlsx');
+    res.attachment(`reporte_proyectos_${start_date || 'inicio'}_${end_date || 'actual'}.xlsx`);
     await workbook.xlsx.write(res);
     res.end();
   } catch (error: any) {
-    res.status(500).json({ detail: error.message });
+    console.error('Error al exportar reporte de proyectos:', error);
+    res.status(500).json({ detail: error.message || 'Error al generar reporte de proyectos' });
   }
 };
