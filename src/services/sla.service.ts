@@ -251,6 +251,48 @@ export const calcularPausaTotalTicketHoras = (ticket: any): { pausaHoras: number
 };
 
 /**
+ * Obtiene la fecha y hora exacta en que el ticket fue resuelto/finalizado,
+ * extrayéndola de la bitácora dinámica para evitar que actualizaciones posteriores
+ * en el campo updated_at de la base de datos aumenten falsamente el tiempo de cierre.
+ */
+export const obtenerFechaResolucionTicket = (ticket: any): number => {
+  let bitacoraArr: any[] = [];
+  const raw = ticket.bitacora_dinamica || ticket.bitacora_raw || ticket.bitacora;
+  if (raw) {
+    try {
+      let parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+      if (Array.isArray(parsed)) bitacoraArr = parsed;
+    } catch (_) {}
+  }
+
+  if (Array.isArray(bitacoraArr) && bitacoraArr.length > 0) {
+    for (let i = bitacoraArr.length - 1; i >= 0; i--) {
+      const b = bitacoraArr[i];
+      const act = ((b.accion || b.detalle || '') + ' ' + (b.notas || '')).toLowerCase();
+      if (
+        act.includes('finalizada') ||
+        act.includes('resuelto') ||
+        act.includes('cerrado') ||
+        act.includes('solucionado')
+      ) {
+        if (b.fecha) {
+          const t = new Date(b.fecha).getTime();
+          if (!isNaN(t) && t > 0) return t;
+        }
+      }
+    }
+  }
+
+  if (ticket.updated_at) {
+    const t = new Date(ticket.updated_at).getTime();
+    if (!isNaN(t) && t > 0) return t;
+  }
+
+  return Date.now();
+};
+
+/**
  * Calcula de manera integral el SLA de un ticket, garantizando que los tiempos
  * vengan de la tabla configuracion_sla y que los tickets con paso por N3/Proveedor
  * queden debidamente cumplidos o exentos sin castigar a los técnicos.
@@ -281,7 +323,7 @@ export const calcularSlaTicket = (
   const slaHoras = resolverSlaHorasTicket(t, slaMap);
   const createdDate = new Date(t.created_at).getTime();
   const esFinalizado = t.estado === 'Cerrado' || t.estado === 'Resuelto' || t.estado === 'Finalizada';
-  const endDate = esFinalizado && t.updated_at ? new Date(t.updated_at).getTime() : Date.now();
+  const endDate = esFinalizado ? obtenerFechaResolucionTicket(t) : Date.now();
 
   const diffHours = Math.max(0, (endDate - createdDate) / (1000 * 60 * 60) - pausaHoras);
 
