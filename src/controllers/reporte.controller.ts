@@ -164,6 +164,7 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
              t.nivel_soporte, t.grupo_n2, t.area_solicitante, t.persona_solicitante, 
              t.medio_solicitud, t.created_at, t.updated_at,
              t.sla_horas, t.sla_paused_at, t.sla_acumulado_pausa_segundos,
+             t.bitacora_dinamica,
              emp.nombre AS empresa_nombre,
              suc.nombre AS sucursal_nombre,
              c.nombre_completo AS creador_nombre,
