@@ -5,6 +5,204 @@ import { RowDataPacket } from 'mysql2';
 import ExcelJS from 'exceljs';
 import { formatearFechaEcuador, getFechaHoraActualEcuador } from '../utils/date.utils';
 
+/**
+ * Función auxiliar para calcular estado y cumplimiento de SLA de un ticket
+ */
+const calcularSlaTicket = (t: any): { slaHoras: number; slaEstadoStr: string; esCumplido: boolean } => {
+  const slaHoras = t.sla_horas || (
+    t.prioridad === 'Critica' || t.prioridad === 'Crítica' ? 4 :
+    t.prioridad === 'Alta' ? 8 :
+    t.prioridad === 'Media' ? 24 : 48
+  );
+
+  let slaEstadoStr = 'En Tiempo';
+  let esCumplido = true;
+
+  if (t.estado === 'Cerrado' || t.estado === 'Resuelto' || t.estado === 'Finalizada') {
+    if (t.sla_cumplido === 0) {
+      slaEstadoStr = 'Vencido en Cierre';
+      esCumplido = false;
+    } else {
+      slaEstadoStr = 'Cumplido';
+      esCumplido = true;
+    }
+  } else {
+    const createdDate = new Date(t.created_at).getTime();
+    const now = new Date().getTime();
+
+    let pausaHoras = 0;
+    if (t.sla_acumulado_pausa_segundos) {
+      pausaHoras = t.sla_acumulado_pausa_segundos / 3600;
+    }
+    if (t.sla_paused_at) {
+      const pausaStart = new Date(t.sla_paused_at).getTime();
+      pausaHoras += (now - pausaStart) / (1000 * 60 * 60);
+    }
+
+    const diffHours = Math.max(0, (now - createdDate) / (1000 * 60 * 60) - pausaHoras);
+    if (diffHours > slaHoras) {
+      slaEstadoStr = 'SLA Vencido';
+      esCumplido = false;
+    } else if (diffHours > slaHoras * 0.75) {
+      slaEstadoStr = 'En Riesgo';
+      esCumplido = true;
+    } else {
+      slaEstadoStr = 'En Tiempo';
+      esCumplido = true;
+    }
+  }
+
+  return { slaHoras, slaEstadoStr, esCumplido };
+};
+
+/**
+ * Obtiene métricas analíticas, distribuciones y SLA general para el rango de fechas y técnico seleccionado
+ */
+export const getReporteStats = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { start_date, end_date, tecnico_id } = req.query;
+    let query = `
+      SELECT t.id, t.titulo, t.descripcion, t.categoria, t.prioridad, t.estado, 
+             t.nivel_soporte, t.grupo_n2, t.created_at, t.updated_at,
+             t.sla_horas, t.sla_cumplido, t.sla_paused_at, t.sla_acumulado_pausa_segundos,
+             t.tecnico_id,
+             a.nombre_completo AS tecnico_nombre
+      FROM ticket t
+      LEFT JOIN usuario a ON t.tecnico_id = a.id
+      WHERE 1=1
+    `;
+    const params: any[] = [];
+
+    if (start_date) {
+      query += ` AND DATE(t.created_at) >= ?`;
+      params.push(start_date);
+    }
+    if (end_date) {
+      query += ` AND DATE(t.created_at) <= ?`;
+      params.push(end_date);
+    }
+
+    if (req.currentUser.rol_nombre === 'ADMIN' || req.currentUser.rol_nombre === 'SUPERVISOR') {
+      if (tecnico_id) {
+        query += ` AND t.tecnico_id = ?`;
+        params.push(tecnico_id);
+      }
+    } else if (req.currentUser.rol_nombre === 'TECNICO') {
+      query += ` AND t.tecnico_id = ?`;
+      params.push(req.currentUser.id);
+    } else {
+      query += ` AND t.creador_id = ?`;
+      params.push(req.currentUser.id);
+    }
+
+    const [tickets] = await pool.query<RowDataPacket[]>(query, params);
+
+    // Contadores de inventario y proyectos
+    const [activosRows] = await pool.query<RowDataPacket[]>(`SELECT COUNT(*) as total_stock FROM activo WHERE estado = 'Stock'`);
+    const [proyectosRows] = await pool.query<RowDataPacket[]>(`SELECT COUNT(*) as total_activos FROM proyecto WHERE estado != 'Finalizado'`);
+
+    let slaCumplidos = 0;
+    let slaVencidos = 0;
+    let slaEnRiesgo = 0;
+    let slaEnTiempo = 0;
+
+    const ticketsPorPrioridad = { Baja: 0, Media: 0, Alta: 0, Critica: 0 };
+    const ticketsPorEstado = {
+      Nuevo: 0,
+      EnProceso: 0,
+      Resuelto: 0,
+      Cerrado: 0,
+      ElevadoAProveedor: 0,
+      ElevadoAAdministracion: 0
+    };
+
+    let solucionados = 0;
+    let pendientes = 0;
+
+    const tecMap = new Map<number, { id: number; nombre: string; total: number; resueltos: number; abiertos: number; slaCumplidos: number; slaVencidos: number }>();
+
+    for (const t of tickets) {
+      const { slaEstadoStr, esCumplido } = calcularSlaTicket(t);
+
+      if (slaEstadoStr === 'SLA Vencido' || slaEstadoStr === 'Vencido en Cierre') {
+        slaVencidos++;
+      } else if (slaEstadoStr === 'En Riesgo') {
+        slaEnRiesgo++;
+        slaCumplidos++;
+      } else {
+        slaEnTiempo++;
+        slaCumplidos++;
+      }
+
+      const normPrio = t.prioridad === 'Crítica' ? 'Critica' : t.prioridad;
+      if (ticketsPorPrioridad[normPrio as keyof typeof ticketsPorPrioridad] !== undefined) {
+        ticketsPorPrioridad[normPrio as keyof typeof ticketsPorPrioridad]++;
+      }
+
+      const esCerrado = t.estado === 'Cerrado' || t.estado === 'Finalizada';
+      const esResuelto = t.estado === 'Resuelto';
+      if (esCerrado || esResuelto) {
+        solucionados++;
+      } else {
+        pendientes++;
+      }
+
+      const stateKey = (t.estado === 'Finalizada' ? 'Cerrado' : t.estado === 'Escalado a Proveedor' ? 'ElevadoAProveedor' : t.estado.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, '')) as keyof typeof ticketsPorEstado;
+      if (ticketsPorEstado[stateKey] !== undefined) {
+        ticketsPorEstado[stateKey]++;
+      }
+
+      const tid = t.tecnico_id || 0;
+      const tnom = t.tecnico_nombre || 'Sin Asignar';
+      if (!tecMap.has(tid)) {
+        tecMap.set(tid, { id: tid, nombre: tnom, total: 0, resueltos: 0, abiertos: 0, slaCumplidos: 0, slaVencidos: 0 });
+      }
+      const tecInfo = tecMap.get(tid)!;
+      tecInfo.total++;
+      if (esCerrado || esResuelto) tecInfo.resueltos++;
+      else tecInfo.abiertos++;
+      if (esCumplido) tecInfo.slaCumplidos++;
+      else tecInfo.slaVencidos++;
+    }
+
+    const totalTickets = tickets.length;
+    const slaTotalEvaluados = slaCumplidos + slaVencidos;
+    const cumplimientoSlaPct = slaTotalEvaluados > 0 ? Math.round((slaCumplidos / slaTotalEvaluados) * 100) : 100;
+    const efectividadPct = totalTickets > 0 ? Math.round((solucionados / totalTickets) * 100) : 0;
+
+    const desgloseTecnicos = Array.from(tecMap.values()).map(tec => {
+      const totSla = tec.slaCumplidos + tec.slaVencidos;
+      return {
+        ...tec,
+        slaPct: totSla > 0 ? Math.round((tec.slaCumplidos / totSla) * 100) : 100
+      };
+    });
+
+    res.json({
+      totalTickets,
+      solucionados,
+      pendientes,
+      efectividadPct,
+      assetsInStock: activosRows[0]?.total_stock || 0,
+      activeProjects: proyectosRows[0]?.total_activos || 0,
+      sla: {
+        totalEvaluados: slaTotalEvaluados,
+        cumplidos: slaCumplidos,
+        vencidos: slaVencidos,
+        enRiesgo: slaEnRiesgo,
+        enTiempo: slaEnTiempo,
+        cumplimientoPct: cumplimientoSlaPct
+      },
+      ticketsPorPrioridad,
+      ticketsPorEstado,
+      desgloseTecnicos
+    });
+  } catch (error: any) {
+    console.error('Error al obtener estadísticas de reportes:', error);
+    res.status(500).json({ detail: error.message || 'Error al obtener estadísticas de reportes' });
+  }
+};
+
 export const exportTickets = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { start_date, end_date, tecnico_id } = req.query;
@@ -12,6 +210,7 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
       SELECT t.id, t.titulo, t.descripcion, t.categoria, t.prioridad, t.estado, 
              t.nivel_soporte, t.grupo_n2, t.area_solicitante, t.persona_solicitante, 
              t.medio_solicitud, t.created_at, t.updated_at,
+             t.sla_horas, t.sla_cumplido, t.sla_paused_at, t.sla_acumulado_pausa_segundos,
              emp.nombre AS empresa_nombre,
              suc.nombre AS sucursal_nombre,
              c.nombre_completo AS creador_nombre,
@@ -77,16 +276,16 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
     });
 
     // 1. Banner Corporativo Superior
-    ws.mergeCells('A2:M2');
+    ws.mergeCells('A2:N2');
     const titleCell = ws.getCell('A2');
-    titleCell.value = 'TISMO • REPORTE GENERAL DE SOPORTE & GESTIÓN DE TICKETS TI';
+    titleCell.value = 'TISMO • REPORTE GENERAL DE SOPORTE, SLA & GESTIÓN DE TICKETS TI';
     titleCell.font = { name: 'Arial', size: 15, bold: true, color: { argb: 'FFFFFFFF' } };
     titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
     titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
     ws.getRow(2).height = 34;
 
     // 2. Subtítulo con filtros y fecha
-    ws.mergeCells('A3:M3');
+    ws.mergeCells('A3:N3');
     const subtitleCell = ws.getCell('A3');
     const filtroFechaStr = `Filtro: ${start_date ? `Desde ${start_date}` : 'Inicio Histórico'} ${end_date ? `Hasta ${end_date}` : 'Hasta la actualidad'}`;
     subtitleCell.value = `${filtroFechaStr}  |  Especialista: ${tecnicoFiltradoNombre}  |  Generado: ${getFechaHoraActualEcuador()}`;
@@ -97,19 +296,31 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
 
     // Métricas KPI
     const totalCount = tickets.length;
-    const resueltosCount = tickets.filter(t => t.estado === 'Finalizada' || t.estado === 'Resuelto').length;
+    const resueltosCount = tickets.filter(t => t.estado === 'Finalizada' || t.estado === 'Resuelto' || t.estado === 'Cerrado').length;
     const enProcesoCount = tickets.filter(t => t.estado === 'En Proceso' || t.estado === 'Pruebas').length;
     const nuevosCount = tickets.filter(t => t.estado === 'Nuevo' || t.estado === 'Pendiente').length;
-    const escaladosCount = tickets.filter(t => t.estado && t.estado.includes('Escalado')).length;
-    const criticosCount = tickets.filter(t => t.prioridad === 'Critica' || t.prioridad === 'Alta').length;
+
+    let slaCumplidosG = 0;
+    let slaVencidosG = 0;
+
+    // Procesar cada ticket con su SLA
+    const ticketsConSla: any[] = (tickets as any[]).map(t => {
+      const { slaHoras, slaEstadoStr, esCumplido } = calcularSlaTicket(t);
+      if (esCumplido) slaCumplidosG++;
+      else slaVencidosG++;
+      return { ...t, slaHoras, slaEstadoStr, esCumplido };
+    });
+
+    const totalSlaG = slaCumplidosG + slaVencidosG;
+    const cumplimientoSlaGlobal = totalSlaG > 0 ? Math.round((slaCumplidosG / totalSlaG) * 100) : 100;
 
     const kpis = [
       { label: 'Total Tickets', val: totalCount, color: 'FF2563EB' },
+      { label: '% Cumplimiento SLA', val: `${cumplimientoSlaGlobal}%`, color: 'FF0D9488' },
       { label: 'Resueltos / Cerrados', val: resueltosCount, color: 'FF059669' },
       { label: 'En Proceso / Pruebas', val: enProcesoCount, color: 'FF0284C7' },
       { label: 'Nuevos / Pendientes', val: nuevosCount, color: 'FFD97706' },
-      { label: 'Escalados (N2/N3)', val: escaladosCount, color: 'FF7C3AED' },
-      { label: 'Críticos / Alta', val: criticosCount, color: 'FFDC2626' }
+      { label: 'SLA Vencidos', val: slaVencidosG, color: 'FFDC2626' }
     ];
 
     ws.getRow(5).height = 18;
@@ -138,9 +349,9 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
     });
 
     // 3. Título de la tabla
-    ws.mergeCells('A8:M8');
+    ws.mergeCells('A8:N8');
     const tableTitle = ws.getCell('A8');
-    tableTitle.value = 'DETALLE DE TICKETS Y CASOS DE SOPORTE';
+    tableTitle.value = 'DETALLE DE TICKETS, CASOS DE SOPORTE Y SEGUIMIENTO DE SLA';
     tableTitle.font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FF0F172A' } };
     tableTitle.alignment = { vertical: 'middle' };
     ws.getRow(8).height = 24;
@@ -155,9 +366,10 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
       'Requerimiento / Asunto',
       'Solicitante',
       'Área',
-      'Medio',
       'Prioridad',
       'Estado Actual',
+      'Horas SLA',
+      'Estado SLA',
       'Especialista Asignado',
       'Fecha Creación'
     ];
@@ -175,15 +387,15 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
 
     // 5. Filas de datos
     let currentRowNum = 10;
-    if (tickets.length === 0) {
-      ws.mergeCells('A10:M10');
+    if (ticketsConSla.length === 0) {
+      ws.mergeCells('A10:N10');
       const emptyCell = ws.getCell('A10');
       emptyCell.value = 'No se encontraron tickets registrados con los filtros seleccionados.';
       emptyCell.font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF64748B' } };
       emptyCell.alignment = { horizontal: 'center', vertical: 'middle' };
       ws.getRow(10).height = 30;
     } else {
-      for (const t of tickets) {
+      for (const t of ticketsConSla) {
         const row = ws.getRow(currentRowNum);
         row.height = 24;
         const isZebra = currentRowNum % 2 === 0;
@@ -191,16 +403,15 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
 
         // Color condicional según el estado
         let estadoColor = 'FF334155';
-        if (t.estado === 'Finalizada' || t.estado === 'Resuelto') estadoColor = 'FF059669';
+        if (t.estado === 'Finalizada' || t.estado === 'Resuelto' || t.estado === 'Cerrado') estadoColor = 'FF059669';
         else if (t.estado === 'En Proceso' || t.estado === 'Pruebas') estadoColor = 'FF2563EB';
         else if (t.estado && t.estado.includes('Escalado')) estadoColor = 'FF7C3AED';
         else if (t.estado === 'Nuevo' || t.estado === 'Pendiente') estadoColor = 'FFD97706';
 
-        // Color condicional según prioridad
-        let prioColor = 'FF475569';
-        if (t.prioridad === 'Critica' || t.prioridad === 'Alta') prioColor = 'FFDC2626';
-        else if (t.prioridad === 'Media') prioColor = 'FFD97706';
-        else if (t.prioridad === 'Baja') prioColor = 'FF059669';
+        // Color SLA
+        let slaColor = 'FF059669';
+        if (t.slaEstadoStr.includes('Vencido')) slaColor = 'FFDC2626';
+        else if (t.slaEstadoStr.includes('Riesgo')) slaColor = 'FFD97706';
 
         const rowValues = [
           `#${t.id}`,
@@ -211,9 +422,10 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
           t.titulo || 'Sin título',
           t.persona_solicitante || t.creador_nombre || 'N/A',
           t.area_solicitante || 'General',
-          t.medio_solicitud || 'Plataforma',
           t.prioridad || 'Media',
           t.estado || 'Nuevo',
+          `${t.slaHoras}h`,
+          t.slaEstadoStr,
           t.tecnico_nombre || 'Sin asignar',
           formatearFechaEcuador(t.created_at)
         ];
@@ -224,8 +436,8 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
           cell.font = {
             name: 'Arial',
             size: 9,
-            bold: idx === 0 || idx === 9 || idx === 10,
-            color: idx === 9 ? { argb: prioColor } : idx === 10 ? { argb: estadoColor } : { argb: 'FF1E293B' }
+            bold: idx === 0 || idx === 9 || idx === 11,
+            color: idx === 9 ? { argb: estadoColor } : idx === 11 ? { argb: slaColor } : { argb: 'FF1E293B' }
           };
           cell.alignment = {
             horizontal: (idx === 5 || idx === 6) ? 'left' : 'center',
@@ -253,19 +465,19 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
     ws.getColumn(6).width = 38;  // Requerimiento
     ws.getColumn(7).width = 24;  // Solicitante
     ws.getColumn(8).width = 18;  // Área
-    ws.getColumn(9).width = 15;  // Medio
-    ws.getColumn(10).width = 14; // Prioridad
-    ws.getColumn(11).width = 18; // Estado
-    ws.getColumn(12).width = 25; // Especialista
-    ws.getColumn(13).width = 20; // Fecha
+    ws.getColumn(9).width = 14;  // Prioridad
+    ws.getColumn(10).width = 18; // Estado
+    ws.getColumn(11).width = 12; // Horas SLA
+    ws.getColumn(12).width = 16; // Estado SLA
+    ws.getColumn(13).width = 25; // Especialista
+    ws.getColumn(14).width = 20; // Fecha
 
     // =========================================================================
     // HOJAS ADICIONALES: PESTAÑAS INDIVIDUALES SI HAY VARIOS ESPECIALISTAS
     // =========================================================================
-    if (!tecnico_id && tickets.length > 0) {
-      // Agrupar tickets por técnico
-      const tecMap = new Map<number, { nombre: string; email: string; tickets: typeof tickets }>();
-      for (const t of tickets) {
+    if (!tecnico_id && ticketsConSla.length > 0) {
+      const tecMap = new Map<number, { nombre: string; email: string; tickets: typeof ticketsConSla }>();
+      for (const t of ticketsConSla) {
         if (t.tecnico_id) {
           if (!tecMap.has(t.tecnico_id)) {
             tecMap.set(t.tecnico_id, {
@@ -288,19 +500,23 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
           views: [{ showGridLines: true }]
         });
 
+        const tecCumplidos = tecData.tickets.filter(x => x.esCumplido).length;
+        const tecTotal = tecData.tickets.length;
+        const tecSlaPct = tecTotal > 0 ? Math.round((tecCumplidos / tecTotal) * 100) : 100;
+
         // Banner del especialista
-        wsTec.mergeCells('A1:J1');
+        wsTec.mergeCells('A1:L1');
         const tecBanner = wsTec.getCell('A1');
-        tecBanner.value = `TISMO • TICKETS DEL ESPECIALISTA: ${tecData.nombre.toUpperCase()}`;
+        tecBanner.value = `TISMO • TICKETS DEL ESPECIALISTA: ${tecData.nombre.toUpperCase()} (SLA: ${tecSlaPct}%)`;
         tecBanner.font = { name: 'Arial', size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
         tecBanner.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
         tecBanner.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
         wsTec.getRow(1).height = 28;
 
         // Sub-banner
-        wsTec.mergeCells('A2:J2');
+        wsTec.mergeCells('A2:L2');
         const tecSub = wsTec.getCell('A2');
-        tecSub.value = `Total Casos Asignados: ${tecData.tickets.length}  |  Resueltos: ${tecData.tickets.filter(x => x.estado === 'Finalizada' || x.estado === 'Resuelto').length}  |  En Proceso: ${tecData.tickets.filter(x => x.estado === 'En Proceso' || x.estado === 'Pruebas').length}  |  Correo: ${tecData.email || 'N/A'}`;
+        tecSub.value = `Total Asignados: ${tecData.tickets.length}  |  Resueltos: ${tecData.tickets.filter(x => x.estado === 'Finalizada' || x.estado === 'Resuelto' || x.estado === 'Cerrado').length}  |  En Proceso: ${tecData.tickets.filter(x => x.estado === 'En Proceso' || x.estado === 'Pruebas').length}  |  % SLA: ${tecSlaPct}%  |  Correo: ${tecData.email || 'N/A'}`;
         tecSub.font = { name: 'Arial', size: 9, color: { argb: 'FFFFFFFF' } };
         tecSub.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
         tecSub.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
@@ -316,6 +532,8 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
           'Área',
           'Prioridad',
           'Estado',
+          'Horas SLA',
+          'Estado SLA',
           'Fecha Creación',
           'Última Modificación'
         ];
@@ -338,8 +556,10 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
           const bgZebra = tRow % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC';
 
           let stCol = 'FF334155';
-          if (item.estado === 'Finalizada' || item.estado === 'Resuelto') stCol = 'FF059669';
+          if (item.estado === 'Finalizada' || item.estado === 'Resuelto' || item.estado === 'Cerrado') stCol = 'FF059669';
           else if (item.estado === 'En Proceso') stCol = 'FF2563EB';
+
+          let slaCol = item.esCumplido ? 'FF059669' : 'FFDC2626';
 
           const vals = [
             `#${item.id}`,
@@ -350,6 +570,8 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
             item.area_solicitante || 'General',
             item.prioridad,
             item.estado,
+            `${item.slaHoras}h`,
+            item.slaEstadoStr,
             formatearFechaEcuador(item.created_at),
             formatearFechaEcuador(item.updated_at)
           ];
@@ -360,8 +582,8 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
             cell.font = {
               name: 'Arial',
               size: 9,
-              bold: idx === 0 || idx === 7,
-              color: idx === 7 ? { argb: stCol } : { argb: 'FF1E293B' }
+              bold: idx === 0 || idx === 7 || idx === 9,
+              color: idx === 7 ? { argb: stCol } : idx === 9 ? { argb: slaCol } : { argb: 'FF1E293B' }
             };
             cell.alignment = {
               horizontal: (idx === 3 || idx === 4) ? 'left' : 'center',
@@ -387,8 +609,10 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
         wsTec.getColumn(6).width = 18;
         wsTec.getColumn(7).width = 14;
         wsTec.getColumn(8).width = 16;
-        wsTec.getColumn(9).width = 18;
-        wsTec.getColumn(10).width = 18;
+        wsTec.getColumn(9).width = 12;
+        wsTec.getColumn(10).width = 16;
+        wsTec.getColumn(11).width = 18;
+        wsTec.getColumn(12).width = 18;
       }
     }
 
