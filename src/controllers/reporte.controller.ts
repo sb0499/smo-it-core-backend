@@ -4,74 +4,7 @@ import { pool } from '../db/connection';
 import { RowDataPacket } from 'mysql2';
 import ExcelJS from 'exceljs';
 import { formatearFechaEcuador, getFechaHoraActualEcuador } from '../utils/date.utils';
-import { getSlaConfigsMap, resolverSlaHorasTicket } from '../services/sla.service';
-
-/**
- * Función auxiliar para calcular estado y cumplimiento de SLA de un ticket tomando los tiempos de la BD
- */
-const calcularSlaTicket = (
-  t: any,
-  slaMap?: Map<string, number>
-): { slaHoras: number; slaEstadoStr: string; esCumplido: boolean; esExentoN3?: boolean } => {
-  // Si el ticket está escalado a N3, a Proveedor o a Administración, no se calcula SLA
-  const esN3 = t.nivel_soporte === 'N3' || 
-               t.estado === 'Elevado a Proveedor' || 
-               t.estado === 'Escalado a Proveedor' || 
-               t.estado === 'Elevado a Administración';
-
-  if (esN3) {
-    return {
-      slaHoras: 0,
-      slaEstadoStr: 'Escalado N3 (Sin SLA)',
-      esCumplido: true,
-      esExentoN3: true
-    };
-  }
-
-  const slaHoras = resolverSlaHorasTicket(t, slaMap);
-
-  let slaEstadoStr = 'En Tiempo';
-  let esCumplido = true;
-
-  const createdDate = new Date(t.created_at).getTime();
-  const endDate = (t.estado === 'Cerrado' || t.estado === 'Resuelto' || t.estado === 'Finalizada') && t.updated_at
-    ? new Date(t.updated_at).getTime()
-    : new Date().getTime();
-
-  let pausaHoras = 0;
-  if (t.sla_acumulado_pausa_segundos) {
-    pausaHoras = t.sla_acumulado_pausa_segundos / 3600;
-  }
-  if (t.sla_paused_at && t.estado !== 'Cerrado' && t.estado !== 'Resuelto' && t.estado !== 'Finalizada') {
-    const pausaStart = new Date(t.sla_paused_at).getTime();
-    pausaHoras += (endDate - pausaStart) / (1000 * 60 * 60);
-  }
-
-  const diffHours = Math.max(0, (endDate - createdDate) / (1000 * 60 * 60) - pausaHoras);
-
-  if (t.estado === 'Cerrado' || t.estado === 'Resuelto' || t.estado === 'Finalizada') {
-    if (diffHours > slaHoras) {
-      slaEstadoStr = 'Vencido en Cierre';
-      esCumplido = false;
-    } else {
-      slaEstadoStr = 'Cumplido';
-      esCumplido = true;
-    }
-  } else {
-    if (diffHours > slaHoras) {
-      slaEstadoStr = 'SLA Vencido';
-      esCumplido = false;
-    } else if (diffHours > slaHoras * 0.75) {
-      slaEstadoStr = 'En Riesgo';
-      esCumplido = true;
-    } else {
-      slaEstadoStr = 'En Tiempo';
-      esCumplido = true;
-    }
-  }
-
-  return { slaHoras, slaEstadoStr, esCumplido };
-};
+import { getSlaConfigsMap, resolverSlaHorasTicket, calcularSlaTicket } from '../services/sla.service';
 
 /**
  * Obtiene métricas analíticas, distribuciones y SLA general para el rango de fechas y técnico seleccionado
@@ -83,6 +16,7 @@ export const getReporteStats = async (req: AuthRequest, res: Response): Promise<
       SELECT t.id, t.titulo, t.descripcion, t.categoria, t.prioridad, t.estado, 
              t.nivel_soporte, t.grupo_n2, t.created_at, t.updated_at,
              t.sla_horas, t.sla_paused_at, t.sla_acumulado_pausa_segundos,
+             t.bitacora_dinamica,
              t.tecnico_id,
              a.nombre_completo AS tecnico_nombre
       FROM ticket t
