@@ -60,6 +60,50 @@ export const bulkUpdateSlaConfigs = async (
 };
 
 /**
+ * Obtiene el mapa completo de configuraciones de SLA directamente de la base de datos
+ */
+export const getSlaConfigsMap = async (): Promise<Map<string, number>> => {
+  try {
+    const configs = await getSlaConfigs();
+    const map = new Map<string, number>();
+    for (const c of configs) {
+      const pNorm = (String(c.prioridad) === 'Crítica' ? 'Critica' : c.prioridad).toUpperCase();
+      map.set(`${c.tipo_itil.toUpperCase()}_${pNorm}`, Number(c.tiempo_horas));
+    }
+    return map;
+  } catch (err) {
+    console.error('Error al cargar mapa de SLA de BD:', err);
+    return new Map<string, number>();
+  }
+};
+
+/**
+ * Resuelve las horas de SLA de un ticket basándose primero en t.sla_horas o en la configuración de la BD
+ */
+export const resolverSlaHorasTicket = (
+  t: { sla_horas?: number | null; nivel_soporte?: string | null; grupo_n2?: string | null; prioridad?: string | null },
+  slaMap?: Map<string, number>
+): number => {
+  if (t.sla_horas && Number(t.sla_horas) > 0) {
+    return Number(t.sla_horas);
+  }
+
+  const esIncidencia = (t.nivel_soporte && t.nivel_soporte !== 'N1') || Boolean(t.grupo_n2);
+  const tipoItil = esIncidencia ? 'INCIDENCIA' : 'SOLICITUD';
+  const pNorm = (t.prioridad === 'Crítica' || t.prioridad === 'Critica' ? 'CRITICA' : (t.prioridad || 'MEDIA')).toUpperCase();
+
+  if (slaMap && slaMap.has(`${tipoItil}_${pNorm}`)) {
+    return slaMap.get(`${tipoItil}_${pNorm}`)!;
+  }
+
+  // Fallbacks de emergencia si no existiera en el mapa de BD
+  if (tipoItil === 'INCIDENCIA') {
+    return pNorm === 'CRITICA' ? 2 : pNorm === 'ALTA' ? 4 : pNorm === 'MEDIA' ? 12 : 24;
+  }
+  return pNorm === 'CRITICA' ? 4 : pNorm === 'ALTA' ? 8 : pNorm === 'MEDIA' ? 24 : 48;
+};
+
+/**
  * Obtiene el tiempo de SLA en horas para un tipo ITIL y nivel de prioridad específico
  */
 export const getSlaHoras = async (
