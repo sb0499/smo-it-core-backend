@@ -8,6 +8,16 @@ reportesRouter.use(requireAuth);
 
 /**
  * @openapi
+ * /api/v1/reportes/stats:
+ *   get:
+ *     tags: [Reportes]
+ *     summary: Obtener estadísticas y métricas de SLA en tiempo real según filtros
+ *     security: [{ bearerAuth: [] }]
+ */
+reportesRouter.get('/stats', ctrl.getReporteStats);
+
+/**
+ * @openapi
  * /api/v1/reportes/tickets:
  *   get:
  *     tags: [Reportes]
