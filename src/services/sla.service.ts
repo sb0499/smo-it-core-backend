@@ -78,29 +78,31 @@ export const getSlaConfigsMap = async (): Promise<Map<string, number>> => {
 };
 
 /**
- * Resuelve las horas de SLA de un ticket basándose primero en t.sla_horas o en la configuración de la BD
+ * Resuelve las horas de SLA de un ticket basándose prioritariamente en la configuración de la BD (configuracion_sla)
  */
 export const resolverSlaHorasTicket = (
   t: { sla_horas?: number | null; nivel_soporte?: string | null; grupo_n2?: string | null; prioridad?: string | null },
   slaMap?: Map<string, number>
 ): number => {
-  if (t.sla_horas && Number(t.sla_horas) > 0) {
-    return Number(t.sla_horas);
-  }
-
   const esIncidencia = (t.nivel_soporte && t.nivel_soporte !== 'N1') || Boolean(t.grupo_n2);
   const tipoItil = esIncidencia ? 'INCIDENCIA' : 'SOLICITUD';
   const pNorm = (t.prioridad === 'Crítica' || t.prioridad === 'Critica' ? 'CRITICA' : (t.prioridad || 'MEDIA')).toUpperCase();
 
+  // 1. Prioridad: Tomar de la tabla configuracion_sla de BD
   if (slaMap && slaMap.has(`${tipoItil}_${pNorm}`)) {
-    return slaMap.get(`${tipoItil}_${pNorm}`)!;
+    const val = slaMap.get(`${tipoItil}_${pNorm}`);
+    if (val && Number(val) > 0) {
+      return Number(val);
+    }
   }
 
-  // Fallbacks de emergencia si no existiera en el mapa de BD
-  if (tipoItil === 'INCIDENCIA') {
-    return pNorm === 'CRITICA' ? 2 : pNorm === 'ALTA' ? 4 : pNorm === 'MEDIA' ? 12 : 24;
+  // 2. Si no estuviera en el mapa, usar t.sla_horas si existe
+  if (t.sla_horas && Number(t.sla_horas) > 0) {
+    return Number(t.sla_horas);
   }
-  return pNorm === 'CRITICA' ? 4 : pNorm === 'ALTA' ? 8 : pNorm === 'MEDIA' ? 24 : 48;
+
+  // 3. Fallbacks de empresa (48 horas estándar)
+  return 48;
 };
 
 /**
