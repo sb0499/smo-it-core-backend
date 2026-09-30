@@ -4,16 +4,31 @@ import { pool } from '../db/connection';
 import { RowDataPacket } from 'mysql2';
 import ExcelJS from 'exceljs';
 import { formatearFechaEcuador, getFechaHoraActualEcuador } from '../utils/date.utils';
+import { getSlaConfigsMap, resolverSlaHorasTicket } from '../services/sla.service';
 
 /**
- * Función auxiliar para calcular estado y cumplimiento de SLA de un ticket
+ * Función auxiliar para calcular estado y cumplimiento de SLA de un ticket tomando los tiempos de la BD
  */
-const calcularSlaTicket = (t: any): { slaHoras: number; slaEstadoStr: string; esCumplido: boolean } => {
-  const slaHoras = t.sla_horas || (
-    t.prioridad === 'Critica' || t.prioridad === 'Crítica' ? 4 :
-    t.prioridad === 'Alta' ? 8 :
-    t.prioridad === 'Media' ? 24 : 48
-  );
+const calcularSlaTicket = (
+  t: any,
+  slaMap?: Map<string, number>
+): { slaHoras: number; slaEstadoStr: string; esCumplido: boolean; esExentoN3?: boolean } => {
+  // Si el ticket está escalado a N3, a Proveedor o a Administración, no se calcula SLA
+  const esN3 = t.nivel_soporte === 'N3' || 
+               t.estado === 'Elevado a Proveedor' || 
+               t.estado === 'Escalado a Proveedor' || 
+               t.estado === 'Elevado a Administración';
+
+  if (esN3) {
+    return {
+      slaHoras: 0,
+      slaEstadoStr: 'Escalado N3 (Sin SLA)',
+      esCumplido: true,
+      esExentoN3: true
+    };
+  }
+
+  const slaHoras = resolverSlaHorasTicket(t, slaMap);
 
   let slaEstadoStr = 'En Tiempo';
   let esCumplido = true;
@@ -99,6 +114,7 @@ export const getReporteStats = async (req: AuthRequest, res: Response): Promise<
     }
 
     const [tickets] = await pool.query<RowDataPacket[]>(query, params);
+    const slaMap = await getSlaConfigsMap();
 
     // Contadores de inventario y proyectos
     const [activosRows] = await pool.query<RowDataPacket[]>(`SELECT COUNT(*) as total_stock FROM activo WHERE estado = 'Stock'`);
@@ -125,7 +141,7 @@ export const getReporteStats = async (req: AuthRequest, res: Response): Promise<
     const tecMap = new Map<number, { id: number; nombre: string; total: number; resueltos: number; abiertos: number; slaCumplidos: number; slaVencidos: number }>();
 
     for (const t of tickets) {
-      const { slaEstadoStr, esCumplido } = calcularSlaTicket(t);
+      const { slaEstadoStr, esCumplido } = calcularSlaTicket(t, slaMap);
 
       if (slaEstadoStr === 'SLA Vencido' || slaEstadoStr === 'Vencido en Cierre') {
         slaVencidos++;
@@ -306,9 +322,11 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
     let slaCumplidosG = 0;
     let slaVencidosG = 0;
 
+    const slaMap = await getSlaConfigsMap();
+
     // Procesar cada ticket con su SLA
     const ticketsConSla: any[] = (tickets as any[]).map(t => {
-      const { slaHoras, slaEstadoStr, esCumplido } = calcularSlaTicket(t);
+      const { slaHoras, slaEstadoStr, esCumplido } = calcularSlaTicket(t, slaMap);
       if (esCumplido) slaCumplidosG++;
       else slaVencidosG++;
       return { ...t, slaHoras, slaEstadoStr, esCumplido };

@@ -9,6 +9,7 @@ import {
   getNowEcuadorParts,
   ECUADOR_TIMEZONE 
 } from '../utils/date.utils';
+import { getSlaConfigsMap, resolverSlaHorasTicket } from './sla.service';
 
 export interface ResumenTecnico {
   tecnico_id: number;
@@ -123,6 +124,8 @@ export const getDatosReporteDiario = async (fechaParam?: string): Promise<Report
     ORDER BY t.id DESC
   `, [fechaStr, fechaStr]);
 
+  const slaMap = await getSlaConfigsMap();
+
   // Formatear cada ticket
   const allTickets: TicketReporte[] = ticketRows.map((t: any) => {
     // Tipo ITIL
@@ -167,28 +170,39 @@ export const getDatosReporteDiario = async (fechaParam?: string): Promise<Report
       }
     }
 
-    // SLA
-    const slaHoras = t.sla_horas || (t.prioridad === 'Crítica' || t.prioridad === 'Critica' ? 4 : t.prioridad === 'Alta' ? 8 : t.prioridad === 'Media' ? 24 : 48);
-    const createdDate = new Date(t.created_at).getTime();
-    const endDate = ESTADOS_FINALIZADOS.includes(t.estado) && t.updated_at
-      ? new Date(t.updated_at).getTime()
-      : new Date().getTime();
+    // SLA resuelto desde la BD según tipo ITIL y prioridad
+    const esN3 = t.nivel_soporte === 'N3' || 
+                 t.estado === 'Elevado a Proveedor' || 
+                 t.estado === 'Escalado a Proveedor' || 
+                 t.estado === 'Elevado a Administración';
 
-    let pausaHoras = 0;
-    if (t.sla_acumulado_pausa_segundos) {
-      pausaHoras = t.sla_acumulado_pausa_segundos / 3600;
-    }
-
-    const diffHours = Math.max(0, (endDate - createdDate) / (1000 * 60 * 60) - pausaHoras);
+    let slaHoras = 0;
     let slaEstadoStr = 'En Tiempo';
 
-    if (ESTADOS_FINALIZADOS.includes(t.estado)) {
-      slaEstadoStr = diffHours > slaHoras ? 'Vencido en Cierre' : 'Cumplido';
+    if (esN3) {
+      slaEstadoStr = 'Escalado N3 (Sin SLA)';
     } else {
-      if (diffHours > slaHoras) {
-        slaEstadoStr = 'SLA Vencido';
-      } else if (diffHours > slaHoras * 0.75) {
-        slaEstadoStr = 'En Riesgo';
+      slaHoras = resolverSlaHorasTicket(t, slaMap);
+      const createdDate = new Date(t.created_at).getTime();
+      const endDate = ESTADOS_FINALIZADOS.includes(t.estado) && t.updated_at
+        ? new Date(t.updated_at).getTime()
+        : new Date().getTime();
+
+      let pausaHoras = 0;
+      if (t.sla_acumulado_pausa_segundos) {
+        pausaHoras = t.sla_acumulado_pausa_segundos / 3600;
+      }
+
+      const diffHours = Math.max(0, (endDate - createdDate) / (1000 * 60 * 60) - pausaHoras);
+
+      if (ESTADOS_FINALIZADOS.includes(t.estado)) {
+        slaEstadoStr = diffHours > slaHoras ? 'Vencido en Cierre' : 'Cumplido';
+      } else {
+        if (diffHours > slaHoras) {
+          slaEstadoStr = 'SLA Vencido';
+        } else if (diffHours > slaHoras * 0.75) {
+          slaEstadoStr = 'En Riesgo';
+        }
       }
     }
 
