@@ -167,14 +167,29 @@ export const calcularPausaTotalTicketHoras = (ticket: any): { pausaHoras: number
 
   // Reconstrucción desde bitácora para detectar períodos históricos en Proveedor/N3
   let bitacoraArr: any[] = [];
-  try {
-    const raw = ticket.bitacora_dinamica || ticket.bitacora_raw;
-    if (typeof raw === 'string') {
-      bitacoraArr = JSON.parse(raw);
-    } else if (Array.isArray(raw)) {
-      bitacoraArr = raw;
+  const raw = ticket.bitacora_dinamica || ticket.bitacora_raw || ticket.bitacora;
+  
+  if (raw) {
+    const rawStr = typeof raw === 'string' ? raw : JSON.stringify(raw);
+    const rawLower = rawStr.toLowerCase();
+    
+    // Si la cadena contiene menciones de proveedor / N3 / pausa
+    if (
+      rawLower.includes('proveedor') || 
+      rawLower.includes('n3') || 
+      rawLower.includes('administración') || 
+      rawLower.includes('administracion') || 
+      rawLower.includes('sla pausado')
+    ) {
+      pasoPorN3 = true;
     }
-  } catch (_) {}
+
+    try {
+      let parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+      if (Array.isArray(parsed)) bitacoraArr = parsed;
+    } catch (_) {}
+  }
 
   if (Array.isArray(bitacoraArr) && bitacoraArr.length > 0) {
     let bitacoraPausaMs = 0;
@@ -236,12 +251,16 @@ export const calcularPausaTotalTicketHoras = (ticket: any): { pausaHoras: number
 };
 
 /**
- * Calcula de manera integral el SLA de un ticket, descontando el tiempo en N3/Proveedor
+ * Calcula de manera integral el SLA de un ticket, garantizando que los tiempos
+ * vengan de la tabla configuracion_sla y que los tickets con paso por N3/Proveedor
+ * queden debidamente cumplidos o exentos sin castigar a los técnicos.
  */
 export const calcularSlaTicket = (
   t: any,
   slaMap?: Map<string, number>
 ): SlaCalculadoResultado => {
+  const { pausaHoras, pasoPorN3 } = calcularPausaTotalTicketHoras(t);
+
   const esActualmenteN3 = t.nivel_soporte === 'N3' || 
                           t.estado === 'Elevado a Proveedor' || 
                           t.estado === 'Escalado a Proveedor' || 
@@ -254,7 +273,7 @@ export const calcularSlaTicket = (
       esCumplido: true,
       esExentoN3: true,
       horasNetas: 0,
-      pausaHoras: 0,
+      pausaHoras,
       pasoPorN3: true
     };
   }
@@ -264,22 +283,26 @@ export const calcularSlaTicket = (
   const esFinalizado = t.estado === 'Cerrado' || t.estado === 'Resuelto' || t.estado === 'Finalizada';
   const endDate = esFinalizado && t.updated_at ? new Date(t.updated_at).getTime() : Date.now();
 
-  const { pausaHoras, pasoPorN3 } = calcularPausaTotalTicketHoras(t);
   const diffHours = Math.max(0, (endDate - createdDate) / (1000 * 60 * 60) - pausaHoras);
 
   let slaEstadoStr = 'En Tiempo';
   let esCumplido = true;
 
   if (esFinalizado) {
-    if (diffHours > slaHoras) {
-      slaEstadoStr = 'Vencido en Cierre';
-      esCumplido = false;
-    } else {
+    // Si el ticket pasó por N3 (Proveedor) o si las horas netas están dentro del SLA de BD
+    if (pasoPorN3 || diffHours <= slaHoras) {
       slaEstadoStr = 'Cumplido';
       esCumplido = true;
+    } else {
+      slaEstadoStr = 'Vencido en Cierre';
+      esCumplido = false;
     }
   } else {
-    if (diffHours > slaHoras) {
+    // Ticket abierto
+    if (pasoPorN3) {
+      slaEstadoStr = 'En Tiempo';
+      esCumplido = true;
+    } else if (diffHours > slaHoras) {
       slaEstadoStr = 'SLA Vencido';
       esCumplido = false;
     } else if (diffHours > slaHoras * 0.75) {
