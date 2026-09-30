@@ -182,13 +182,33 @@ export const calcularPausaTotalTicketHoras = (ticket: any): { pausaHoras: number
     for (const b of bitacoraArr) {
       const act = ((b.accion || b.detalle || '') + ' ' + (b.notas || '')).toLowerCase();
       const fechaMs = b.fecha ? new Date(b.fecha).getTime() : 0;
-      const esEntradaN3 = act.includes('proveedor') || act.includes('n3') || act.includes('administración') || act.includes('administracion') || act.includes('sla pausado');
+      if (!fechaMs) continue;
 
-      if (!inN3 && esEntradaN3 && fechaMs > 0) {
+      const esSalidaN3 = act.includes('a "finalizada"') || 
+                         act.includes('a "resuelto"') || 
+                         act.includes('a "cerrado"') || 
+                         act.includes('cambiado de "escalado a proveedor"') ||
+                         act.includes('cambiado de "elevado a proveedor"') ||
+                         act.includes('ticket escalado a nivel 2') ||
+                         act.includes('ticket escalado a nivel 1') ||
+                         act.includes('resuelto') ||
+                         act.includes('cerrado');
+
+      const esEntradaN3 = !esSalidaN3 && (
+        act.includes('elevado a proveedor') || 
+        act.includes('escalado a proveedor') || 
+        act.includes('(n3)') || 
+        act.includes('elevado a administración') || 
+        act.includes('sla pausado') ||
+        act.includes('a "elevado a proveedor"') ||
+        act.includes('a "escalado a proveedor"')
+      );
+
+      if (!inN3 && esEntradaN3) {
         inN3 = true;
         pasoPorN3 = true;
         n3StartTime = fechaMs;
-      } else if (inN3 && !esEntradaN3 && fechaMs > 0) {
+      } else if (inN3 && (esSalidaN3 || !esEntradaN3)) {
         bitacoraPausaMs += Math.max(0, fechaMs - n3StartTime);
         inN3 = false;
         n3StartTime = 0;
