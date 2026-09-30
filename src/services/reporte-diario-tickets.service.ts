@@ -6,7 +6,8 @@ import {
   getFechaHoyEcuador, 
   getHoraActualEcuador, 
   formatearFechaEcuador, 
-  getNowEcuadorParts 
+  getNowEcuadorParts,
+  ECUADOR_TIMEZONE 
 } from '../utils/date.utils';
 
 export interface ResumenTecnico {
@@ -73,6 +74,20 @@ export const getDatosReporteDiario = async (fechaParam?: string): Promise<Report
   const fechaStr = fechaParam || getFechaHoyEcuador();
   const horaStr = getHoraActualEcuador();
 
+  const getFechaYMD = (dateVal: any): string => {
+    if (!dateVal) return '';
+    const d = typeof dateVal === 'string' ? new Date(dateVal) : dateVal;
+    if (isNaN(d.getTime())) return '';
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: ECUADOR_TIMEZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(d);
+  };
+
+  const ESTADOS_FINALIZADOS = ['Resuelto', 'Cerrado', 'Finalizada'];
+
   // 1. Obtener todos los técnicos y supervisores activos
   const [tecnicosRows] = await pool.query<RowDataPacket[]>(`
     SELECT u.id, u.nombre_completo, u.email, r.nombre as rol_nombre, 
@@ -83,7 +98,8 @@ export const getDatosReporteDiario = async (fechaParam?: string): Promise<Report
     ORDER BY u.nombre_completo ASC
   `);
 
-  // 2. Obtener todos los tickets creados/actualizados en la fecha, o que están actualmente abiertos
+  // 2. Obtener todos los tickets creados o modificados en la fecha, O QUE SIGAN ABIERTOS/EN PROCESO
+  // Cualquier ticket no cerrado (creado hoy o en días pasados como el 22 de sept) se incluye como backlog activo
   const [ticketRows] = await pool.query<RowDataPacket[]>(`
     SELECT t.*,
            e.nombre as empresa_nombre,
@@ -103,7 +119,7 @@ export const getDatosReporteDiario = async (fechaParam?: string): Promise<Report
     LEFT JOIN usuario u_n2 ON t.tecnico_n2_id = u_n2.id
     WHERE DATE(t.created_at) = ? 
        OR DATE(t.updated_at) = ?
-       OR t.estado IN ('Nuevo', 'En Proceso', 'Elevado a Proveedor', 'Elevado a Administración')
+       OR t.estado NOT IN ('Resuelto', 'Cerrado', 'Finalizada')
     ORDER BY t.id DESC
   `, [fechaStr, fechaStr]);
 
@@ -154,7 +170,7 @@ export const getDatosReporteDiario = async (fechaParam?: string): Promise<Report
     // SLA
     const slaHoras = t.sla_horas || (t.prioridad === 'Crítica' ? 4 : t.prioridad === 'Alta' ? 8 : t.prioridad === 'Media' ? 24 : 48);
     let slaEstadoStr = 'En Tiempo';
-    if (t.estado === 'Cerrado' || t.estado === 'Resuelto') {
+    if (ESTADOS_FINALIZADOS.includes(t.estado)) {
       slaEstadoStr = t.sla_cumplido === 0 ? 'Vencido en Cierre' : 'Cumplido';
     } else {
       const createdDate = new Date(t.created_at).getTime();
@@ -181,7 +197,7 @@ export const getDatosReporteDiario = async (fechaParam?: string): Promise<Report
       estado: t.estado || 'Nuevo',
       created_at: formatearFechaEcuador(t.created_at),
       updated_at: t.updated_at ? formatearFechaEcuador(t.updated_at) : '-',
-      fecha_resolucion: (t.estado === 'Resuelto' || t.estado === 'Cerrado') && t.updated_at ? formatearFechaEcuador(t.updated_at) : null,
+      fecha_resolucion: ESTADOS_FINALIZADOS.includes(t.estado) && t.updated_at ? formatearFechaEcuador(t.updated_at) : null,
       sla_horas: slaHoras,
       sla_cumplido: t.sla_cumplido,
       sla_estado_str: slaEstadoStr,
@@ -217,41 +233,73 @@ export const getDatosReporteDiario = async (fechaParam?: string): Promise<Report
     });
   }
 
+  // Contenedor para tickets sin técnico asignado
+  const sinAsignarTecnico: ResumenTecnico = {
+    tecnico_id: 0,
+    nombre_completo: '⚠️ Sin Asignar / Mesa de Entrada',
+    email: '-',
+    rol_nombre: 'MESA_ENTRADA',
+    nivel_soporte: 'General',
+    grupo_n2: null,
+    total_gestionados: 0,
+    solicitudes_n1: 0,
+    incidencias_n2_n3: 0,
+    resueltos_hoy: 0,
+    cerrados_hoy: 0,
+    abiertos_pendientes: 0,
+    sla_cumplidos: 0,
+    sla_vencidos: 0,
+    tickets: []
+  };
+
   // Asignar tickets a técnicos
   for (const rawTicket of ticketRows) {
     const formatted = allTickets.find(t => t.id === rawTicket.id)!;
     const tecId = rawTicket.tecnico_id || rawTicket.tecnico_n1_id || rawTicket.tecnico_n2_id;
 
+    let res: ResumenTecnico;
     if (tecId && tecnicosResumenMap.has(tecId)) {
-      const res = tecnicosResumenMap.get(tecId)!;
-      res.tickets.push(formatted);
-      res.total_gestionados++;
-      if (formatted.tipo_itil === 'Solicitud') res.solicitudes_n1++;
-      else res.incidencias_n2_n3++;
-
-      const isToday = rawTicket.updated_at && new Date(rawTicket.updated_at).toISOString().split('T')[0] === fechaStr;
-      if (rawTicket.estado === 'Resuelto' && isToday) res.resueltos_hoy++;
-      if (rawTicket.estado === 'Cerrado' && isToday) res.cerrados_hoy++;
-      if (['Nuevo', 'En Proceso', 'Elevado a Proveedor', 'Elevado a Administración'].includes(rawTicket.estado)) {
-        res.abiertos_pendientes++;
-      }
-
-      if (formatted.sla_estado_str.includes('Vencido')) res.sla_vencidos++;
-      else res.sla_cumplidos++;
+      res = tecnicosResumenMap.get(tecId)!;
+    } else {
+      res = sinAsignarTecnico;
     }
+
+    res.tickets.push(formatted);
+    res.total_gestionados++;
+    if (formatted.tipo_itil === 'Solicitud') res.solicitudes_n1++;
+    else res.incidencias_n2_n3++;
+
+    const isCreadoHoy = getFechaYMD(rawTicket.created_at) === fechaStr;
+    const isActualizadoHoy = getFechaYMD(rawTicket.updated_at) === fechaStr;
+    const isCerradoOFinalizado = ESTADOS_FINALIZADOS.includes(rawTicket.estado);
+
+    if (isCerradoOFinalizado && (isActualizadoHoy || isCreadoHoy)) {
+      if (rawTicket.estado === 'Cerrado') res.cerrados_hoy++;
+      else res.resueltos_hoy++;
+    }
+    if (!isCerradoOFinalizado) {
+      res.abiertos_pendientes++;
+    }
+
+    if (formatted.sla_estado_str.includes('Vencido')) res.sla_vencidos++;
+    else res.sla_cumplidos++;
   }
 
   const tecnicosList = Array.from(tecnicosResumenMap.values())
     // Solo incluimos en el reporte aquellos que tengan tickets o sean técnicos de campo / mesa
     .filter(t => t.tickets.length > 0 || t.rol_nombre === 'TECNICO');
 
+  if (sinAsignarTecnico.tickets.length > 0) {
+    tecnicosList.unshift(sinAsignarTecnico);
+  }
+
   // Totales globales
   const totalTicketsDia = allTickets.length;
   const totalSolicitudesN1 = allTickets.filter(t => t.tipo_itil === 'Solicitud').length;
   const totalIncidencias = allTickets.filter(t => t.tipo_itil === 'Incidencia').length;
-  const totalResueltosHoy = allTickets.filter(t => t.estado === 'Resuelto' && t.updated_at.includes(fechaStr)).length;
-  const totalCerradosHoy = allTickets.filter(t => t.estado === 'Cerrado' && t.updated_at.includes(fechaStr)).length;
-  const totalAbiertos = allTickets.filter(t => ['Nuevo', 'En Proceso', 'Elevado a Proveedor', 'Elevado a Administración'].includes(t.estado)).length;
+  const totalResueltosHoy = ticketRows.filter(t => (t.estado === 'Resuelto' || t.estado === 'Finalizada') && (getFechaYMD(t.updated_at) === fechaStr || getFechaYMD(t.created_at) === fechaStr)).length;
+  const totalCerradosHoy = ticketRows.filter(t => t.estado === 'Cerrado' && (getFechaYMD(t.updated_at) === fechaStr || getFechaYMD(t.created_at) === fechaStr)).length;
+  const totalAbiertos = ticketRows.filter(t => !ESTADOS_FINALIZADOS.includes(t.estado)).length;
   
   const totalConSla = allTickets.length;
   const vencidos = allTickets.filter(t => t.sla_estado_str.includes('Vencido')).length;
