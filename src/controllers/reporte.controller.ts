@@ -18,8 +18,24 @@ const calcularSlaTicket = (t: any): { slaHoras: number; slaEstadoStr: string; es
   let slaEstadoStr = 'En Tiempo';
   let esCumplido = true;
 
+  const createdDate = new Date(t.created_at).getTime();
+  const endDate = (t.estado === 'Cerrado' || t.estado === 'Resuelto' || t.estado === 'Finalizada') && t.updated_at
+    ? new Date(t.updated_at).getTime()
+    : new Date().getTime();
+
+  let pausaHoras = 0;
+  if (t.sla_acumulado_pausa_segundos) {
+    pausaHoras = t.sla_acumulado_pausa_segundos / 3600;
+  }
+  if (t.sla_paused_at && t.estado !== 'Cerrado' && t.estado !== 'Resuelto' && t.estado !== 'Finalizada') {
+    const pausaStart = new Date(t.sla_paused_at).getTime();
+    pausaHoras += (endDate - pausaStart) / (1000 * 60 * 60);
+  }
+
+  const diffHours = Math.max(0, (endDate - createdDate) / (1000 * 60 * 60) - pausaHoras);
+
   if (t.estado === 'Cerrado' || t.estado === 'Resuelto' || t.estado === 'Finalizada') {
-    if (t.sla_cumplido === 0) {
+    if (diffHours > slaHoras) {
       slaEstadoStr = 'Vencido en Cierre';
       esCumplido = false;
     } else {
@@ -27,19 +43,6 @@ const calcularSlaTicket = (t: any): { slaHoras: number; slaEstadoStr: string; es
       esCumplido = true;
     }
   } else {
-    const createdDate = new Date(t.created_at).getTime();
-    const now = new Date().getTime();
-
-    let pausaHoras = 0;
-    if (t.sla_acumulado_pausa_segundos) {
-      pausaHoras = t.sla_acumulado_pausa_segundos / 3600;
-    }
-    if (t.sla_paused_at) {
-      const pausaStart = new Date(t.sla_paused_at).getTime();
-      pausaHoras += (now - pausaStart) / (1000 * 60 * 60);
-    }
-
-    const diffHours = Math.max(0, (now - createdDate) / (1000 * 60 * 60) - pausaHoras);
     if (diffHours > slaHoras) {
       slaEstadoStr = 'SLA Vencido';
       esCumplido = false;
@@ -64,7 +67,7 @@ export const getReporteStats = async (req: AuthRequest, res: Response): Promise<
     let query = `
       SELECT t.id, t.titulo, t.descripcion, t.categoria, t.prioridad, t.estado, 
              t.nivel_soporte, t.grupo_n2, t.created_at, t.updated_at,
-             t.sla_horas, t.sla_cumplido, t.sla_paused_at, t.sla_acumulado_pausa_segundos,
+             t.sla_horas, t.sla_paused_at, t.sla_acumulado_pausa_segundos,
              t.tecnico_id,
              a.nombre_completo AS tecnico_nombre
       FROM ticket t
@@ -210,7 +213,7 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
       SELECT t.id, t.titulo, t.descripcion, t.categoria, t.prioridad, t.estado, 
              t.nivel_soporte, t.grupo_n2, t.area_solicitante, t.persona_solicitante, 
              t.medio_solicitud, t.created_at, t.updated_at,
-             t.sla_horas, t.sla_cumplido, t.sla_paused_at, t.sla_acumulado_pausa_segundos,
+             t.sla_horas, t.sla_paused_at, t.sla_acumulado_pausa_segundos,
              emp.nombre AS empresa_nombre,
              suc.nombre AS sucursal_nombre,
              c.nombre_completo AS creador_nombre,

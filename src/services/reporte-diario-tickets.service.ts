@@ -168,14 +168,23 @@ export const getDatosReporteDiario = async (fechaParam?: string): Promise<Report
     }
 
     // SLA
-    const slaHoras = t.sla_horas || (t.prioridad === 'Crítica' ? 4 : t.prioridad === 'Alta' ? 8 : t.prioridad === 'Media' ? 24 : 48);
+    const slaHoras = t.sla_horas || (t.prioridad === 'Crítica' || t.prioridad === 'Critica' ? 4 : t.prioridad === 'Alta' ? 8 : t.prioridad === 'Media' ? 24 : 48);
+    const createdDate = new Date(t.created_at).getTime();
+    const endDate = ESTADOS_FINALIZADOS.includes(t.estado) && t.updated_at
+      ? new Date(t.updated_at).getTime()
+      : new Date().getTime();
+
+    let pausaHoras = 0;
+    if (t.sla_acumulado_pausa_segundos) {
+      pausaHoras = t.sla_acumulado_pausa_segundos / 3600;
+    }
+
+    const diffHours = Math.max(0, (endDate - createdDate) / (1000 * 60 * 60) - pausaHoras);
     let slaEstadoStr = 'En Tiempo';
+
     if (ESTADOS_FINALIZADOS.includes(t.estado)) {
-      slaEstadoStr = t.sla_cumplido === 0 ? 'Vencido en Cierre' : 'Cumplido';
+      slaEstadoStr = diffHours > slaHoras ? 'Vencido en Cierre' : 'Cumplido';
     } else {
-      const createdDate = new Date(t.created_at).getTime();
-      const now = new Date().getTime();
-      const diffHours = (now - createdDate) / (1000 * 60 * 60);
       if (diffHours > slaHoras) {
         slaEstadoStr = 'SLA Vencido';
       } else if (diffHours > slaHoras * 0.75) {
