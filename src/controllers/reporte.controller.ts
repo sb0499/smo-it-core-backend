@@ -387,10 +387,14 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
         if (t.slaEstadoStr.includes('Vencido')) slaColor = 'FFDC2626';
         else if (t.slaEstadoStr.includes('Riesgo')) slaColor = 'FFD97706';
 
+        const especialistaTexto = t.tecnico_n2_nombre
+          ? (t.tecnico_n1_nombre ? `${t.tecnico_n2_nombre} (N2) / Mesa: ${t.tecnico_n1_nombre}` : `${t.tecnico_n2_nombre} (N2)`)
+          : (t.tecnico_nombre || 'Sin asignar');
+
         const rowValues = [
           `#${t.id}`,
           t.categoria || 'Soporte',
-          t.grupo_n2 ? `${t.nivel_soporte || 'N1'} (${t.grupo_n2})` : (t.nivel_soporte || 'N1'),
+          t.grupo_n2 ? `${t.nivel_soporte || 'N2'} (${t.grupo_n2})` : (t.nivel_soporte || 'N1'),
           t.empresa_nombre || 'General',
           t.sucursal_nombre || 'Matriz',
           t.titulo || 'Sin título',
@@ -400,7 +404,7 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
           t.estado || 'Nuevo',
           `${t.slaHoras}h`,
           t.slaEstadoStr,
-          t.tecnico_nombre || 'Sin asignar',
+          especialistaTexto,
           formatearFechaEcuador(t.created_at)
         ];
 
