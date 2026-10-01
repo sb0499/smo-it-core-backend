@@ -17,10 +17,14 @@ export const getReporteStats = async (req: AuthRequest, res: Response): Promise<
              t.nivel_soporte, t.grupo_n2, t.created_at, t.updated_at,
              t.sla_horas, t.sla_paused_at, t.sla_acumulado_pausa_segundos,
              t.bitacora_dinamica,
-             t.tecnico_id,
-             a.nombre_completo AS tecnico_nombre
+             t.tecnico_id, t.tecnico_n1_id, t.tecnico_n2_id,
+             a.nombre_completo AS tecnico_nombre,
+             u_n2.nombre_completo AS tecnico_n2_nombre,
+             u_n1.nombre_completo AS tecnico_n1_nombre
       FROM ticket t
       LEFT JOIN usuario a ON t.tecnico_id = a.id
+      LEFT JOIN usuario u_n2 ON t.tecnico_n2_id = u_n2.id
+      LEFT JOIN usuario u_n1 ON t.tecnico_n1_id = u_n1.id
       WHERE 1=1
     `;
     const params: any[] = [];
@@ -36,12 +40,12 @@ export const getReporteStats = async (req: AuthRequest, res: Response): Promise<
 
     if (req.currentUser.rol_nombre === 'ADMIN' || req.currentUser.rol_nombre === 'SUPERVISOR') {
       if (tecnico_id) {
-        query += ` AND t.tecnico_id = ?`;
-        params.push(tecnico_id);
+        query += ` AND (t.tecnico_id = ? OR t.tecnico_n1_id = ? OR t.tecnico_n2_id = ?)`;
+        params.push(tecnico_id, tecnico_id, tecnico_id);
       }
     } else if (req.currentUser.rol_nombre === 'TECNICO') {
-      query += ` AND t.tecnico_id = ?`;
-      params.push(req.currentUser.id);
+      query += ` AND (t.tecnico_id = ? OR t.tecnico_n1_id = ? OR t.tecnico_n2_id = ?)`;
+      params.push(req.currentUser.id, req.currentUser.id, req.currentUser.id);
     } else {
       query += ` AND t.creador_id = ?`;
       params.push(req.currentUser.id);
@@ -105,8 +109,17 @@ export const getReporteStats = async (req: AuthRequest, res: Response): Promise<
         ticketsPorEstado[stateKey]++;
       }
 
-      const tid = t.tecnico_id || 0;
-      const tnom = t.tecnico_nombre || 'Sin Asignar';
+      // El técnico responsable de la resolución técnica y SLA es N2 si el ticket pasó por N2
+      const resolutorId = (t.tecnico_n2_id && (esCerrado || esResuelto || t.nivel_soporte === 'N2'))
+        ? t.tecnico_n2_id
+        : (t.tecnico_id || t.tecnico_n1_id || 0);
+
+      const resolutorNombre = (t.tecnico_n2_id && (esCerrado || esResuelto || t.nivel_soporte === 'N2'))
+        ? (t.tecnico_n2_nombre || t.tecnico_nombre || 'Sin Asignar')
+        : (t.tecnico_nombre || t.tecnico_n1_nombre || 'Sin Asignar');
+
+      const tid = resolutorId;
+      const tnom = resolutorNombre;
       if (!tecMap.has(tid)) {
         tecMap.set(tid, { id: tid, nombre: tnom, total: 0, resueltos: 0, abiertos: 0, slaCumplidos: 0, slaVencidos: 0 });
       }
@@ -165,17 +178,22 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
              t.medio_solicitud, t.created_at, t.updated_at,
              t.sla_horas, t.sla_paused_at, t.sla_acumulado_pausa_segundos,
              t.bitacora_dinamica,
+             t.tecnico_id, t.tecnico_n1_id, t.tecnico_n2_id,
              emp.nombre AS empresa_nombre,
              suc.nombre AS sucursal_nombre,
              c.nombre_completo AS creador_nombre,
              a.id AS tecnico_id,
              a.nombre_completo AS tecnico_nombre,
-             a.email AS tecnico_email
+             a.email AS tecnico_email,
+             u_n2.nombre_completo AS tecnico_n2_nombre,
+             u_n1.nombre_completo AS tecnico_n1_nombre
       FROM ticket t
       LEFT JOIN empresa emp ON t.empresa_id = emp.id
       LEFT JOIN sucursal suc ON t.sucursal_id = suc.id
       LEFT JOIN usuario c ON t.creador_id = c.id
       LEFT JOIN usuario a ON t.tecnico_id = a.id
+      LEFT JOIN usuario u_n2 ON t.tecnico_n2_id = u_n2.id
+      LEFT JOIN usuario u_n1 ON t.tecnico_n1_id = u_n1.id
       WHERE 1=1
     `;
     const params: any[] = [];
@@ -191,12 +209,12 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
 
     if (req.currentUser.rol_nombre === 'ADMIN' || req.currentUser.rol_nombre === 'SUPERVISOR') {
       if (tecnico_id) {
-        query += ` AND t.tecnico_id = ?`;
-        params.push(tecnico_id);
+        query += ` AND (t.tecnico_id = ? OR t.tecnico_n1_id = ? OR t.tecnico_n2_id = ?)`;
+        params.push(tecnico_id, tecnico_id, tecnico_id);
       }
     } else if (req.currentUser.rol_nombre === 'TECNICO') {
-      query += ` AND t.tecnico_id = ?`;
-      params.push(req.currentUser.id);
+      query += ` AND (t.tecnico_id = ? OR t.tecnico_n1_id = ? OR t.tecnico_n2_id = ?)`;
+      params.push(req.currentUser.id, req.currentUser.id, req.currentUser.id);
     } else {
       query += ` AND t.creador_id = ?`;
       params.push(req.currentUser.id);

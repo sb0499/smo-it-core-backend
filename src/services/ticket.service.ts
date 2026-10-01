@@ -1308,9 +1308,9 @@ export const getTicketsPaginated = async (
 
   // Filtro ITIL: SOLICITUDES (Nivel 1) vs INCIDENCIAS (N2, N3 / Proveedor, Administración)
   if (effectiveTipoItil === 'SOLICITUDES') {
-    whereClauses.push(`((t.nivel_soporte = 'N1' OR t.nivel_soporte IS NULL) AND t.estado NOT IN ('Elevado a Proveedor', 'Elevado a Administración', 'Escalado a Proveedor'))`);
+    whereClauses.push(`((t.nivel_soporte = 'N1' OR t.nivel_soporte IS NULL) AND t.tecnico_n2_id IS NULL AND t.grupo_n2 IS NULL AND t.estado NOT IN ('Elevado a Proveedor', 'Elevado a Administración', 'Escalado a Proveedor'))`);
   } else if (effectiveTipoItil === 'INCIDENCIAS') {
-    whereClauses.push(`(t.nivel_soporte IN ('N2', 'N3', 'ADMIN') OR t.estado IN ('Elevado a Proveedor', 'Elevado a Administración', 'Escalado a Proveedor'))`);
+    whereClauses.push(`(t.nivel_soporte IN ('N2', 'N3', 'ADMIN') OR t.tecnico_n2_id IS NOT NULL OR t.grupo_n2 IS NOT NULL OR t.estado IN ('Elevado a Proveedor', 'Elevado a Administración', 'Escalado a Proveedor'))`);
   }
 
   if (excludeStatus) {
