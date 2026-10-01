@@ -196,7 +196,9 @@ export const getDatosReporteDiario = async (fechaParam?: string): Promise<Report
       adjuntos_count: adjuntosCount,
       adjuntos_nombres: adjuntosNombres,
       bitacora_texto: bitacoraTexto,
-      tecnico_asignado_nombre: t.tecnico_asignado_nombre || 'Sin Asignar',
+      tecnico_asignado_nombre: t.tecnico_n2_nombre
+        ? (t.tecnico_n1_nombre ? `${t.tecnico_n2_nombre} (N2) / Mesa: ${t.tecnico_n1_nombre}` : `${t.tecnico_n2_nombre} (N2)`)
+        : (t.tecnico_asignado_nombre || t.tecnico_nombre || 'Sin Asignar'),
       tecnico_n1_nombre: t.tecnico_n1_nombre || '-',
       tecnico_n2_nombre: t.tecnico_n2_nombre || '-'
     };

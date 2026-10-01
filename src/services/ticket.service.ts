@@ -414,7 +414,7 @@ export const updateTicket = async (ticketId: number, data: any, currentUser?: an
       // 1) Si N2 marca el ticket como Cerrado o Resuelto
       if ((data.estado === 'Cerrado' || data.estado === 'Finalizada' || data.estado === 'Resuelto') && tOld.nivel_soporte === 'N2') {
         data.estado = 'Resuelto';
-        data.nivel_soporte = 'N1';
+        data.nivel_soporte = 'N2';
         data.tecnico_n2_id = tOld.tecnico_id || currentUser.id;
         if (tOld.tecnico_n1_id) {
           data.tecnico_id = tOld.tecnico_n1_id;
