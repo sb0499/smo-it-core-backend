@@ -248,7 +248,7 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
     });
 
     // 1. Banner Corporativo Superior
-    ws.mergeCells('A2:N2');
+    ws.mergeCells('A2:O2');
     const titleCell = ws.getCell('A2');
     titleCell.value = 'TISMO • REPORTE GENERAL DE SOPORTE, SLA & GESTIÓN DE TICKETS TI';
     titleCell.font = { name: 'Arial', size: 15, bold: true, color: { argb: 'FFFFFFFF' } };
@@ -257,7 +257,7 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
     ws.getRow(2).height = 34;
 
     // 2. Subtítulo con filtros y fecha
-    ws.mergeCells('A3:N3');
+    ws.mergeCells('A3:O3');
     const subtitleCell = ws.getCell('A3');
     const filtroFechaStr = `Filtro: ${start_date ? `Desde ${start_date}` : 'Inicio Histórico'} ${end_date ? `Hasta ${end_date}` : 'Hasta la actualidad'}`;
     subtitleCell.value = `${filtroFechaStr}  |  Especialista: ${tecnicoFiltradoNombre}  |  Generado: ${getFechaHoraActualEcuador()}`;
@@ -323,7 +323,7 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
     });
 
     // 3. Título de la tabla
-    ws.mergeCells('A8:N8');
+    ws.mergeCells('A8:O8');
     const tableTitle = ws.getCell('A8');
     tableTitle.value = 'DETALLE DE TICKETS, CASOS DE SOPORTE Y SEGUIMIENTO DE SLA';
     tableTitle.font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FF0F172A' } };
@@ -344,7 +344,8 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
       'Estado Actual',
       'Horas SLA',
       'Estado SLA',
-      'Especialista Asignado',
+      'Técnico N1',
+      'Técnico N2',
       'Fecha Creación'
     ];
 
@@ -362,7 +363,7 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
     // 5. Filas de datos
     let currentRowNum = 10;
     if (ticketsConSla.length === 0) {
-      ws.mergeCells('A10:N10');
+      ws.mergeCells('A10:O10');
       const emptyCell = ws.getCell('A10');
       emptyCell.value = 'No se encontraron tickets registrados con los filtros seleccionados.';
       emptyCell.font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF64748B' } };
@@ -387,9 +388,8 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
         if (t.slaEstadoStr.includes('Vencido')) slaColor = 'FFDC2626';
         else if (t.slaEstadoStr.includes('Riesgo')) slaColor = 'FFD97706';
 
-        const especialistaTexto = t.tecnico_n2_nombre
-          ? (t.tecnico_n1_nombre ? `${t.tecnico_n2_nombre} (N2) / Mesa: ${t.tecnico_n1_nombre}` : `${t.tecnico_n2_nombre} (N2)`)
-          : (t.tecnico_nombre || 'Sin asignar');
+        const tecN1Nombre = t.tecnico_n1_nombre || (t.nivel_soporte === 'N1' ? t.tecnico_nombre : '-') || '-';
+        const tecN2Nombre = t.tecnico_n2_nombre || (t.nivel_soporte === 'N2' ? t.tecnico_nombre : '-') || '-';
 
         const rowValues = [
           `#${t.id}`,
@@ -404,7 +404,8 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
           t.estado || 'Nuevo',
           `${t.slaHoras}h`,
           t.slaEstadoStr,
-          especialistaTexto,
+          tecN1Nombre,
+          tecN2Nombre,
           formatearFechaEcuador(t.created_at)
         ];
 
@@ -447,8 +448,9 @@ export const exportTickets = async (req: AuthRequest, res: Response): Promise<vo
     ws.getColumn(10).width = 18; // Estado
     ws.getColumn(11).width = 12; // Horas SLA
     ws.getColumn(12).width = 16; // Estado SLA
-    ws.getColumn(13).width = 25; // Especialista
-    ws.getColumn(14).width = 20; // Fecha
+    ws.getColumn(13).width = 24; // Técnico N1
+    ws.getColumn(14).width = 24; // Técnico N2
+    ws.getColumn(15).width = 20; // Fecha Creación
 
     // =========================================================================
     // HOJAS ADICIONALES: PESTAÑAS INDIVIDUALES SI HAY VARIOS ESPECIALISTAS

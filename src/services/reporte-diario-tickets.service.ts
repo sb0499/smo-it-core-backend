@@ -250,38 +250,67 @@ export const getDatosReporteDiario = async (fechaParam?: string): Promise<Report
   for (const rawTicket of ticketRows) {
     const formatted = allTickets.find(t => t.id === rawTicket.id)!;
     
-    // Si el ticket pasó por N2 (escalado o resuelto en N2), la resolución técnica y SLA pertenecen al especialista N2
-    const isFinalizadoOEnN2 = ESTADOS_FINALIZADOS.includes(rawTicket.estado) || rawTicket.nivel_soporte === 'N2';
-    const tecId = (rawTicket.tecnico_n2_id && isFinalizadoOEnN2)
-      ? rawTicket.tecnico_n2_id
-      : (rawTicket.tecnico_id || rawTicket.tecnico_n1_id || rawTicket.tecnico_n2_id);
+    // Identificar todos los técnicos que participaron activamente en el ticket
+    const techIdsToAssign = new Set<number>();
+    if (rawTicket.tecnico_n2_id && Number(rawTicket.tecnico_n2_id) > 0) {
+      techIdsToAssign.add(Number(rawTicket.tecnico_n2_id));
+    }
+    if (rawTicket.tecnico_n1_id && Number(rawTicket.tecnico_n1_id) > 0) {
+      techIdsToAssign.add(Number(rawTicket.tecnico_n1_id));
+    }
+    if (rawTicket.tecnico_id && Number(rawTicket.tecnico_id) > 0) {
+      techIdsToAssign.add(Number(rawTicket.tecnico_id));
+    }
 
-    let res: ResumenTecnico;
-    if (tecId && tecnicosResumenMap.has(tecId)) {
-      res = tecnicosResumenMap.get(tecId)!;
+    if (techIdsToAssign.size === 0) {
+      sinAsignarTecnico.tickets.push(formatted);
+      sinAsignarTecnico.total_gestionados++;
+      if (formatted.tipo_itil === 'Solicitud') sinAsignarTecnico.solicitudes_n1++;
+      else sinAsignarTecnico.incidencias_n2_n3++;
+      if (ESTADOS_FINALIZADOS.includes(rawTicket.estado)) sinAsignarTecnico.cerrados_hoy++;
+      else sinAsignarTecnico.abiertos_pendientes++;
+      if (formatted.sla_estado_str.includes('Vencido')) sinAsignarTecnico.sla_vencidos++;
+      else sinAsignarTecnico.sla_cumplidos++;
     } else {
-      res = sinAsignarTecnico;
+      const isCreadoHoy = getFechaYMD(rawTicket.created_at) === fechaStr;
+      const isActualizadoHoy = getFechaYMD(rawTicket.updated_at) === fechaStr;
+      const isCerradoOFinalizado = ESTADOS_FINALIZADOS.includes(rawTicket.estado);
+
+      for (const tId of techIdsToAssign) {
+        const res = tecnicosResumenMap.get(tId);
+        if (!res) continue;
+
+        if (!res.tickets.some(t => t.id === formatted.id)) {
+          res.tickets.push(formatted);
+          res.total_gestionados++;
+
+          const esEspecialistaN2 = res.nivel_soporte === 'N2' || tId === rawTicket.tecnico_n2_id;
+          if (esEspecialistaN2) {
+            res.incidencias_n2_n3++;
+            if (isCerradoOFinalizado && (isActualizadoHoy || isCreadoHoy)) {
+              if (rawTicket.estado === 'Cerrado') res.cerrados_hoy++;
+              else res.resueltos_hoy++;
+            }
+          } else {
+            if (formatted.tipo_itil === 'Solicitud') res.solicitudes_n1++;
+            else res.incidencias_n2_n3++;
+            if (isCerradoOFinalizado && (isActualizadoHoy || isCreadoHoy)) {
+              res.cerrados_hoy++;
+            }
+          }
+
+          if (!isCerradoOFinalizado) {
+            res.abiertos_pendientes++;
+          }
+
+          if (formatted.sla_estado_str.includes('Vencido')) {
+            res.sla_vencidos++;
+          } else {
+            res.sla_cumplidos++;
+          }
+        }
+      }
     }
-
-    res.tickets.push(formatted);
-    res.total_gestionados++;
-    if (formatted.tipo_itil === 'Solicitud') res.solicitudes_n1++;
-    else res.incidencias_n2_n3++;
-
-    const isCreadoHoy = getFechaYMD(rawTicket.created_at) === fechaStr;
-    const isActualizadoHoy = getFechaYMD(rawTicket.updated_at) === fechaStr;
-    const isCerradoOFinalizado = ESTADOS_FINALIZADOS.includes(rawTicket.estado);
-
-    if (isCerradoOFinalizado && (isActualizadoHoy || isCreadoHoy)) {
-      if (rawTicket.estado === 'Cerrado') res.cerrados_hoy++;
-      else res.resueltos_hoy++;
-    }
-    if (!isCerradoOFinalizado) {
-      res.abiertos_pendientes++;
-    }
-
-    if (formatted.sla_estado_str.includes('Vencido')) res.sla_vencidos++;
-    else res.sla_cumplidos++;
   }
 
   const tecnicosList = Array.from(tecnicosResumenMap.values())
