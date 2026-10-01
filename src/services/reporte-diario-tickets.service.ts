@@ -247,7 +247,12 @@ export const getDatosReporteDiario = async (fechaParam?: string): Promise<Report
   // Asignar tickets a técnicos
   for (const rawTicket of ticketRows) {
     const formatted = allTickets.find(t => t.id === rawTicket.id)!;
-    const tecId = rawTicket.tecnico_id || rawTicket.tecnico_n1_id || rawTicket.tecnico_n2_id;
+    
+    // Si el ticket pasó por N2 (escalado o resuelto en N2), la resolución técnica y SLA pertenecen al especialista N2
+    const isFinalizadoOEnN2 = ESTADOS_FINALIZADOS.includes(rawTicket.estado) || rawTicket.nivel_soporte === 'N2';
+    const tecId = (rawTicket.tecnico_n2_id && isFinalizadoOEnN2)
+      ? rawTicket.tecnico_n2_id
+      : (rawTicket.tecnico_id || rawTicket.tecnico_n1_id || rawTicket.tecnico_n2_id);
 
     let res: ResumenTecnico;
     if (tecId && tecnicosResumenMap.has(tecId)) {

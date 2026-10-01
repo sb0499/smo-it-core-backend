@@ -267,19 +267,46 @@ export const obtenerFechaResolucionTicket = (ticket: any): number => {
   }
 
   if (Array.isArray(bitacoraArr) && bitacoraArr.length > 0) {
+    // 1. Encontrar el índice de la última reapertura (si existió)
+    let lastReaperturaIdx = 0;
     for (let i = bitacoraArr.length - 1; i >= 0; i--) {
+      const act = ((bitacoraArr[i].accion || bitacoraArr[i].detalle || '') + ' ' + (bitacoraArr[i].notas || '')).toLowerCase();
+      if (act.includes('reabiert') || act.includes('reapertura')) {
+        lastReaperturaIdx = i;
+        break;
+      }
+    }
+
+    // 2. Buscar primero si hubo un evento explícito de "Resuelto" / solución técnica después de la reapertura
+    for (let i = lastReaperturaIdx; i < bitacoraArr.length; i++) {
       const b = bitacoraArr[i];
       const act = ((b.accion || b.detalle || '') + ' ' + (b.notas || '')).toLowerCase();
-      if (
-        act.includes('finalizada') ||
-        act.includes('resuelto') ||
-        act.includes('cerrado') ||
-        act.includes('solucionado')
-      ) {
+      if (act.includes('resuelto') || act.includes('solucionado')) {
         if (b.fecha) {
           const t = new Date(b.fecha).getTime();
           if (!isNaN(t) && t > 0) return t;
         }
+      }
+    }
+
+    // 3. Si no hubo estado "Resuelto" explícito previo, buscar evento de "Cerrado" / "Finalizada"
+    for (let i = lastReaperturaIdx; i < bitacoraArr.length; i++) {
+      const b = bitacoraArr[i];
+      const act = ((b.accion || b.detalle || '') + ' ' + (b.notas || '')).toLowerCase();
+      if (act.includes('cerrado') || act.includes('finalizada')) {
+        if (b.fecha) {
+          const t = new Date(b.fecha).getTime();
+          if (!isNaN(t) && t > 0) return t;
+        }
+      }
+    }
+
+    // 4. Fallback: último registro con fecha en la bitácora
+    for (let i = bitacoraArr.length - 1; i >= 0; i--) {
+      const b = bitacoraArr[i];
+      if (b.fecha) {
+        const t = new Date(b.fecha).getTime();
+        if (!isNaN(t) && t > 0) return t;
       }
     }
   }
