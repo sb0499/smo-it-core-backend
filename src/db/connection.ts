@@ -380,6 +380,19 @@ async function initDbSchema() {
       await pool.query(`ALTER TABLE ingreso_bodega ADD COLUMN recepcion_bodega_id INT NULL`);
     }
 
+    // 8.1 Create historial_ingreso_bodega table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS historial_ingreso_bodega (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        ingreso_bodega_id INT NOT NULL,
+        usuario_id INT NULL,
+        fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        cambios TEXT NOT NULL,
+        CONSTRAINT fk_historial_ingreso FOREIGN KEY (ingreso_bodega_id) REFERENCES ingreso_bodega (id) ON DELETE CASCADE,
+        CONSTRAINT fk_historial_ingreso_usuario FOREIGN KEY (usuario_id) REFERENCES usuario (id) ON DELETE SET NULL
+      ) ENGINE=InnoDB;
+    `);
+
     // 9. Create recepcion_bodega table
     console.log('Checking/creating recepcion_bodega table...');
     await pool.query(`

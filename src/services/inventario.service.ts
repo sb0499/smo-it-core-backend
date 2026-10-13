@@ -642,6 +642,289 @@ export const createIngresoBodega = async (
   return getIngresoBodegaById(ingresoId);
 };
 
+export const updateIngresoBodega = async (
+  ingresoId: number,
+  data: {
+    proveedor_id?: number | null;
+    nro_orden_compra?: string;
+    nro_factura?: string | null;
+    nro_solicitud_pago?: string | null;
+    fecha_compra?: string;
+    fecha_ingreso?: string;
+    descripcion?: string;
+    revisado_por?: string;
+    revisado_por_cargo?: string;
+    activos_actualizar?: Array<{
+      id: number;
+      serial?: string;
+      marca?: string;
+      modelo?: string;
+      especificaciones?: string;
+      tipo_equipo_id?: number;
+      bodega_id?: number;
+    }>;
+    activos_nuevos?: Array<{
+      tipo_equipo_id: number;
+      marca: string;
+      modelo: string;
+      serial?: string;
+      especificaciones?: string;
+      bodega_id?: number;
+    }>;
+    activos_eliminar_ids?: number[];
+  },
+  usuarioId: number
+) => {
+  // 1. Fetch existing ingreso
+  const [ingresoRows] = await pool.query<RowDataPacket[]>(
+    'SELECT * FROM ingreso_bodega WHERE id = ?',
+    [ingresoId]
+  );
+  if (ingresoRows.length === 0) {
+    throw new Error('Ingreso de bodega no encontrado.');
+  }
+  const oldIngreso = ingresoRows[0];
+  const auditChanges: string[] = [];
+
+  // Default bodega for company if not provided per asset
+  const [bodegaRows] = await pool.query<RowDataPacket[]>(
+    'SELECT id FROM bodega WHERE empresa_id = ? ORDER BY id ASC LIMIT 1',
+    [oldIngreso.empresa_id]
+  );
+  const defaultBodegaId = bodegaRows[0]?.id || null;
+
+  // 2. Update Header fields if provided
+  const headerUpdates: string[] = [];
+  const headerParams: any[] = [];
+
+  const headerFields = [
+    { key: 'proveedor_id', label: 'Proveedor' },
+    { key: 'nro_orden_compra', label: 'Nro. Orden de Compra' },
+    { key: 'nro_factura', label: 'Nro. Factura' },
+    { key: 'nro_solicitud_pago', label: 'Nro. Solicitud de Pago' },
+    { key: 'fecha_compra', label: 'Fecha de Compra' },
+    { key: 'fecha_ingreso', label: 'Fecha de Ingreso' },
+    { key: 'descripcion', label: 'Descripción' },
+    { key: 'revisado_por', label: 'Revisado Por' },
+    { key: 'revisado_por_cargo', label: 'Cargo de quien revisa' }
+  ];
+
+  for (const f of headerFields) {
+    if ((data as any)[f.key] !== undefined) {
+      const newVal = (data as any)[f.key];
+      const oldVal = oldIngreso[f.key];
+
+      let isChanged = false;
+      if (newVal === null || newVal === '' || newVal === 'null') {
+        if (oldVal !== null && oldVal !== '') isChanged = true;
+      } else if (f.key.startsWith('fecha_')) {
+        const oldDateStr = oldVal ? new Date(oldVal).toISOString().split('T')[0] : '';
+        const newDateStr = String(newVal).split('T')[0];
+        if (oldDateStr !== newDateStr) isChanged = true;
+      } else {
+        if (String(newVal).trim() !== String(oldVal || '').trim()) isChanged = true;
+      }
+
+      if (isChanged) {
+        headerUpdates.push(`${f.key} = ?`);
+        const finalVal = (newVal === null || newVal === '' || newVal === 'null') ? null : newVal;
+        headerParams.push(finalVal);
+        auditChanges.push(`Cabecera ${f.label}: de "${oldVal || 'N/A'}" a "${newVal || 'N/A'}"`);
+      }
+    }
+  }
+
+  if (headerUpdates.length > 0) {
+    headerParams.push(ingresoId);
+    await pool.query(
+      `UPDATE ingreso_bodega SET ${headerUpdates.join(', ')} WHERE id = ?`,
+      headerParams
+    );
+
+    // If fecha_compra or proveedor_id changed, sync to existing assets in Stock
+    if (data.fecha_compra || data.proveedor_id !== undefined) {
+      const syncUpdates: string[] = [];
+      const syncParams: any[] = [];
+      if (data.fecha_compra) {
+        syncUpdates.push('fecha_compra = ?');
+        syncParams.push(data.fecha_compra);
+      }
+      if (data.proveedor_id !== undefined) {
+        syncUpdates.push('proveedor_id = ?');
+        syncParams.push(data.proveedor_id || null);
+      }
+      if (syncUpdates.length > 0) {
+        syncParams.push(ingresoId);
+        await pool.query(
+          `UPDATE activo SET ${syncUpdates.join(', ')} WHERE ingreso_bodega_id = ? AND estado = 'Stock'`,
+          syncParams
+        );
+      }
+    }
+  }
+
+  // 3. Delete assets requested to be removed
+  if (data.activos_eliminar_ids && data.activos_eliminar_ids.length > 0) {
+    for (const activoId of data.activos_eliminar_ids) {
+      const [actRows] = await pool.query<RowDataPacket[]>(
+        'SELECT * FROM activo WHERE id = ? AND ingreso_bodega_id = ?',
+        [activoId, ingresoId]
+      );
+      if (actRows.length === 0) continue;
+      const act = actRows[0];
+
+      if (act.estado !== 'Stock' || act.egreso_bodega_id || act.recepcion_bodega_id) {
+        throw new Error(
+          `El activo ${act.codigo} no se puede eliminar porque ya no está en Stock o tiene asignación/movimiento.`
+        );
+      }
+
+      const [movRows] = await pool.query<RowDataPacket[]>(
+        'SELECT COUNT(*) as count FROM movimiento_inventario WHERE activo_id = ?',
+        [activoId]
+      );
+      if ((movRows[0]?.count || 0) > 0) {
+        throw new Error(
+          `El activo ${act.codigo} no se puede eliminar porque cuenta con historial de movimientos.`
+        );
+      }
+
+      // Safe to delete
+      await pool.query('DELETE FROM activo WHERE id = ?', [activoId]);
+      auditChanges.push(
+        `Se eliminó activo del acta: ${act.codigo} (${act.marca} ${act.modelo} - Serial: ${act.serial || 'NA'})`
+      );
+    }
+  }
+
+  // 4. Update existing assets
+  if (data.activos_actualizar && data.activos_actualizar.length > 0) {
+    for (const item of data.activos_actualizar) {
+      const [actRows] = await pool.query<RowDataPacket[]>(
+        'SELECT * FROM activo WHERE id = ? AND ingreso_bodega_id = ?',
+        [item.id, ingresoId]
+      );
+      if (actRows.length === 0) continue;
+      const oldAct = actRows[0];
+
+      const actUpdates: string[] = [];
+      const actParams: any[] = [];
+      const actChanges: string[] = [];
+
+      const actFields = [
+        { key: 'serial', label: 'Serial' },
+        { key: 'marca', label: 'Marca' },
+        { key: 'modelo', label: 'Modelo' },
+        { key: 'especificaciones', label: 'Especificaciones' },
+        { key: 'tipo_equipo_id', label: 'Tipo de Equipo' },
+        { key: 'bodega_id', label: 'Bodega' }
+      ];
+
+      for (const af of actFields) {
+        if ((item as any)[af.key] !== undefined) {
+          const nVal = (item as any)[af.key];
+          const oVal = oldAct[af.key];
+
+          let changed = false;
+          if (nVal === null || nVal === '' || nVal === 'null') {
+            if (oVal !== null && oVal !== '') changed = true;
+          } else {
+            if (String(nVal).trim() !== String(oVal || '').trim()) changed = true;
+          }
+
+          if (changed) {
+            actUpdates.push(`${af.key} = ?`);
+            const finalVal = (nVal === null || nVal === '' || nVal === 'null') ? null : nVal;
+            actParams.push(finalVal);
+            actChanges.push(`${af.label}: "${oVal || 'N/A'}" -> "${nVal || 'N/A'}"`);
+          }
+        }
+      }
+
+      if (actUpdates.length > 0) {
+        actParams.push(item.id);
+        await pool.query(
+          `UPDATE activo SET ${actUpdates.join(', ')} WHERE id = ?`,
+          actParams
+        );
+
+        const changeDesc = `Modificado desde Edición Acta IB ${oldIngreso.codigo_ingreso}: ${actChanges.join(', ')}`;
+        await pool.query(
+          `INSERT INTO historial_cambios_activo (activo_id, usuario_id, cambios) VALUES (?, ?, ?)`,
+          [item.id, usuarioId, changeDesc]
+        );
+        auditChanges.push(`Activo ${oldAct.codigo}: ${actChanges.join(', ')}`);
+      }
+    }
+  }
+
+  // 5. Add new missing assets
+  if (data.activos_nuevos && data.activos_nuevos.length > 0) {
+    for (const item of data.activos_nuevos) {
+      const finalCodigo = await generateUniqueCode(oldIngreso.empresa_id, item.tipo_equipo_id);
+      const bodegaId = item.bodega_id || defaultBodegaId;
+      const sucursalId = oldIngreso.sucursal_id || null;
+      const proveedorId = (data.proveedor_id !== undefined ? data.proveedor_id : oldIngreso.proveedor_id) || null;
+      const fechaCompra = data.fecha_compra || oldIngreso.fecha_compra;
+
+      const [activoResult] = await pool.query<ResultSetHeader>(
+        `INSERT INTO activo (codigo, serial, marca, modelo, especificaciones, estado, proveedor_id, fecha_compra, tipo_equipo_id, empresa_id, sucursal_id, bodega_id, ingreso_bodega_id)
+         VALUES (?, ?, ?, ?, ?, 'Stock', ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          finalCodigo,
+          item.serial || null,
+          item.marca,
+          item.modelo,
+          item.especificaciones || null,
+          proveedorId,
+          fechaCompra,
+          item.tipo_equipo_id,
+          oldIngreso.empresa_id,
+          sucursalId,
+          bodegaId,
+          ingresoId
+        ]
+      );
+
+      await pool.query(
+        `INSERT INTO historial_cambios_activo (activo_id, usuario_id, cambios) VALUES (?, ?, ?)`,
+        [
+          activoResult.insertId,
+          usuarioId,
+          `Activo agregado posteriormente a Ingreso de Bodega ${oldIngreso.codigo_ingreso}`
+        ]
+      );
+
+      auditChanges.push(
+        `Se agregó activo nuevo: ${finalCodigo} (${item.marca} ${item.modelo} - Serial: ${item.serial || 'NA'})`
+      );
+    }
+  }
+
+  // 6. Validation: ensure the acta still has at least 1 asset
+  const [remainingRows] = await pool.query<RowDataPacket[]>(
+    'SELECT COUNT(*) as count FROM activo WHERE ingreso_bodega_id = ?',
+    [ingresoId]
+  );
+  if ((remainingRows[0]?.count || 0) === 0) {
+    throw new Error('El acta de ingreso no puede quedar sin ningún activo registrado.');
+  }
+
+  // 7. Save audit trail
+  if (auditChanges.length > 0) {
+    try {
+      await pool.query(
+        `INSERT INTO historial_ingreso_bodega (ingreso_bodega_id, usuario_id, cambios) VALUES (?, ?, ?)`,
+        [ingresoId, usuarioId, auditChanges.join(' | ')]
+      );
+    } catch (err: any) {
+      console.warn('Error saving to historial_ingreso_bodega:', err.message);
+    }
+  }
+
+  return getIngresoBodegaById(ingresoId);
+};
+
 export const getIngresosBodega = async (
   page = 1,
   limit = 10,
@@ -746,15 +1029,31 @@ export const getIngresoBodegaById = async (ingresoId: number) => {
   const ingreso = ingresoRows[0];
 
   const [activosRows] = await pool.query<RowDataPacket[]>(
-    `SELECT a.*, te.nombre as tipo_equipo_nombre
+    `SELECT a.*, te.nombre as tipo_equipo_nombre, b.nombre as bodega_nombre
      FROM activo a
      LEFT JOIN tipo_equipo te ON a.tipo_equipo_id = te.id
+     LEFT JOIN bodega b ON a.bodega_id = b.id
      WHERE a.ingreso_bodega_id = ?
      ORDER BY a.id ASC`,
     [ingresoId]
   );
 
   ingreso.activos = activosRows;
+
+  try {
+    const [historialRows] = await pool.query<RowDataPacket[]>(
+      `SELECT h.*, u.nombre_completo as usuario_nombre
+       FROM historial_ingreso_bodega h
+       LEFT JOIN usuario u ON h.usuario_id = u.id
+       WHERE h.ingreso_bodega_id = ?
+       ORDER BY h.fecha DESC`,
+      [ingresoId]
+    );
+    ingreso.historial_ediciones = historialRows;
+  } catch (err: any) {
+    ingreso.historial_ediciones = [];
+  }
+
   return ingreso;
 };
 

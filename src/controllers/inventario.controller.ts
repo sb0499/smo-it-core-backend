@@ -454,6 +454,43 @@ export const getIngresoBodegaById = async (req: AuthRequest, res: Response): Pro
   }
 };
 
+export const updateIngresoBodega = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.currentUser) {
+      res.status(401).json({ detail: 'Usuario no autenticado' });
+      return;
+    }
+
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      res.status(400).json({ detail: 'ID de ingreso inválido' });
+      return;
+    }
+
+    const existing = await inventarioService.getIngresoBodegaById(id);
+    if (!existing) {
+      res.status(404).json({ detail: 'Ingreso de bodega no encontrado' });
+      return;
+    }
+
+    if (req.currentUser.rol_nombre === 'TECNICO') {
+      const assigned = await getAssignedSucursales(req.currentUser.id);
+      const isCreator = existing.realizado_por_id === req.currentUser.id;
+      const isAssignedCompany = assigned.empresaIds.length === 0 || assigned.empresaIds.includes(existing.empresa_id);
+
+      if (!isCreator && !isAssignedCompany) {
+        res.status(403).json({ detail: 'No tienes autorización para editar este ingreso de bodega.' });
+        return;
+      }
+    }
+
+    const updated = await inventarioService.updateIngresoBodega(id, req.body, req.currentUser.id);
+    res.json(updated);
+  } catch (error: any) {
+    res.status(400).json({ detail: error.message || 'Error al actualizar ingreso de bodega' });
+  }
+};
+
 export const descargarActaIngreso = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const id = parseInt(req.params.id);
