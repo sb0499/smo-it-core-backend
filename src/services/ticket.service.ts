@@ -411,8 +411,17 @@ export const updateTicket = async (ticketId: number, data: any, currentUser?: an
     }
 
     if (data.estado !== undefined && data.estado !== tOld.estado) {
-      // 1) Si N2 marca el ticket como Cerrado o Resuelto
-      if ((data.estado === 'Cerrado' || data.estado === 'Finalizada' || data.estado === 'Resuelto') && tOld.nivel_soporte === 'N2') {
+      const isUserN2 = currentUser?.rol_nombre === 'TECNICO' && currentUser?.nivel_soporte === 'N2';
+
+      // 1) Si N2 marca el ticket como Cerrado o Resuelto (o si un ticket en N2 no resuelto es marcado como Resuelto)
+      // OJO: Si el ticket ya estaba en 'Resuelto' (esperando confirmación de N1), no se debe interceptar para que N1 o Admin pueda cerrarlo definitivamente.
+      if (
+        tOld.estado !== 'Resuelto' &&
+        (
+          (isUserN2 && (data.estado === 'Cerrado' || data.estado === 'Finalizada' || data.estado === 'Resuelto')) ||
+          (data.estado === 'Resuelto' && tOld.nivel_soporte === 'N2')
+        )
+      ) {
         data.estado = 'Resuelto';
         data.nivel_soporte = 'N2';
         data.tecnico_n2_id = tOld.tecnico_id || currentUser.id;
@@ -459,10 +468,18 @@ export const updateTicket = async (ticketId: number, data: any, currentUser?: an
           ).catch(console.error);
         }
       }
-      // 3) Si N1 o Admin cierra un ticket (pasa a 'Cerrado')
+      // 3) Si N1 o Admin cierra un ticket definitivamente (pasa a 'Cerrado' o 'Finalizada')
       else if (data.estado === 'Cerrado' || data.estado === 'Finalizada') {
         data.estado = 'Cerrado';
         logs.push(`Ticket cerrado definitivamente por (${currentUser.nombre_completo}) tras confirmación con el usuario.`);
+
+        if (tOld.tecnico_n2_id && tOld.tecnico_n2_id !== currentUser.id) {
+          crearNotificacion(
+            tOld.tecnico_n2_id,
+            `Ticket Cerrado Definitivamente: ${tOld.titulo}`,
+            `El ticket #${tOld.id} "${tOld.titulo}" que resolviste fue confirmado y cerrado definitivamente por ${currentUser.nombre_completo}.`
+          ).catch(console.error);
+        }
       }
       else {
         logs.push(`Estado cambiado de "${tOld.estado}" a "${data.estado}"`);
