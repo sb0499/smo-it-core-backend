@@ -53,6 +53,7 @@ inventariosRouter.get('/autogenerar-codigo', requireAuth, requireAdminOrTecnico,
 inventariosRouter.post('/ingresos', requireAuth, requireAdminOrTecnico, ctrl.createIngresoBodega);
 inventariosRouter.get('/ingresos', requireAuth, requireAdminOrTecnico, ctrl.getIngresosBodega);
 inventariosRouter.get('/ingresos/:id', requireAuth, requireAdminOrTecnico, ctrl.getIngresoBodegaById);
+inventariosRouter.put('/ingresos/:id', requireAuth, requireAdminOrTecnico, ctrl.updateIngresoBodega);
 inventariosRouter.get('/ingresos/:id/acta', requireAuth, requireAdminOrTecnico, ctrl.descargarActaIngreso);
 
 // Egresos de Bodega (Actas de Egreso / Asignación Multi-Activo)
