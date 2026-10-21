@@ -538,7 +538,7 @@ export const createIngresoBodega = async (
     empresa_id: number;
     sucursal_id?: number;
     proveedor_id?: number;
-    nro_orden_compra: string;
+    nro_orden_compra?: string | null;
     nro_factura?: string;
     nro_solicitud_pago?: string;
     fecha_compra: string;
@@ -591,7 +591,7 @@ export const createIngresoBodega = async (
       data.empresa_id,
       sucursalId,
       data.proveedor_id || null,
-      data.nro_orden_compra,
+      data.nro_orden_compra ? data.nro_orden_compra.trim() || null : null,
       data.nro_factura || null,
       data.nro_solicitud_pago || null,
       data.fecha_compra,
@@ -646,7 +646,7 @@ export const updateIngresoBodega = async (
   ingresoId: number,
   data: {
     proveedor_id?: number | null;
-    nro_orden_compra?: string;
+    nro_orden_compra?: string | null;
     nro_factura?: string | null;
     nro_solicitud_pago?: string | null;
     fecha_compra?: string;
