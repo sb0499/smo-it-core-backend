@@ -319,7 +319,7 @@ async function initDbSchema() {
         codigo_ingreso VARCHAR(50) NOT NULL UNIQUE,
         empresa_id INT NOT NULL,
         proveedor_id INT NULL,
-        nro_orden_compra VARCHAR(100) NOT NULL,
+        nro_orden_compra VARCHAR(100) NULL DEFAULT NULL,
         nro_factura VARCHAR(100) NULL,
         nro_solicitud_pago VARCHAR(100) NULL,
         fecha_compra DATE NOT NULL,
@@ -334,6 +334,12 @@ async function initDbSchema() {
         CONSTRAINT fk_ingreso_realizado_por FOREIGN KEY (realizado_por_id) REFERENCES usuario(id) ON DELETE SET NULL
       ) ENGINE=InnoDB;
     `);
+
+    try {
+      await pool.query(`ALTER TABLE ingreso_bodega MODIFY COLUMN nro_orden_compra VARCHAR(100) NULL DEFAULT NULL`);
+    } catch (e: any) {
+      // Ignorar si ya es nullable
+    }
 
     if (!colNames.includes('ingreso_bodega_id')) {
       console.log('Adding ingreso_bodega_id column to activo table...');
