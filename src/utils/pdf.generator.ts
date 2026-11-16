@@ -2,6 +2,12 @@ import PDFDocument from 'pdfkit';
 import path from 'path';
 import fs from 'fs';
 import { getEmpresaAbbr } from '../services/credencial.service';
+import {
+  formatFechaHoraEcuador,
+  formatFechaEcuador,
+  formatFechaEcuadorSpanish,
+  parseEcuadorDateTime
+} from './date.utils';
 
 function renderActaHeaderLogos(
   doc: InstanceType<typeof PDFDocument>,
@@ -65,7 +71,11 @@ export const generarActaMovimiento = (movimiento: any): Promise<Buffer> => {
     doc.moveUp(3);
     const numeroActa = movimiento.id.toString().padStart(5, '0');
     doc.fillColor('#3b82f6').fontSize(12).font('Helvetica-Bold').text(`ACTA Nº ${numeroActa}`, { align: 'right' });
-    doc.fillColor('#6b7280').fontSize(11).font('Helvetica').text(`Fecha: ${new Date(movimiento.fecha).toLocaleDateString('es-EC')}`, { align: 'right' });
+    const pFechaMov = parseEcuadorDateTime(movimiento.fecha);
+    const fechaMovStr = pFechaMov
+      ? `${String(pFechaMov.day).padStart(2, '0')}/${String(pFechaMov.month).padStart(2, '0')}/${pFechaMov.year}`
+      : String(movimiento.fecha || '');
+    doc.fillColor('#6b7280').fontSize(11).font('Helvetica').text(`Fecha: ${fechaMovStr}`, { align: 'right' });
     
     doc.moveDown(2);
     doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor('#3b82f6').lineWidth(2).stroke();
@@ -193,12 +203,9 @@ export const generarActaIngreso = (ingreso: any): Promise<Buffer> => {
     const colDescX = 208;
     doc.moveTo(colDescX, boxY + rowHeight * 2).lineTo(colDescX, boxY + rowHeight * 3).strokeColor('#000000').lineWidth(1).stroke();
 
-    // Helper for dates
-    const formatDate = (dateStr?: string) => {
-      if (!dateStr) return '';
-      const d = new Date(dateStr);
-      if (isNaN(d.getTime())) return dateStr;
-      return d.toISOString().split('T')[0];
+    // Helper for dates in Ecuador timezone
+    const formatDate = (dateStr?: string | Date) => {
+      return formatFechaEcuador(dateStr);
     };
 
     // Cell Row 1
@@ -399,11 +406,8 @@ export const generarActaEgreso = (egreso: any): Promise<Buffer> => {
     doc.font('Helvetica-Bold').fontSize(8.5).text('Observación:', col1X + 8, r2Y + 4);
     doc.font('Helvetica').fontSize(9).text(egreso.observaciones || 'Sin observaciones.', col1X + 8, r2Y + 16, { width: 310, ellipsis: true });
 
-    const formatDateTime = (dateStr?: string) => {
-      if (!dateStr) return '';
-      const d = new Date(dateStr);
-      if (isNaN(d.getTime())) return dateStr;
-      return d.toISOString().replace('T', ' ').substring(0, 19);
+    const formatDateTime = (dateStr?: string | Date) => {
+      return formatFechaHoraEcuador(dateStr);
     };
 
     doc.font('Helvetica-Bold').fontSize(8.5).text('Fecha-Hora del Egreso:', colObsX, r2Y + 4, { width: 215, align: 'center' });
@@ -500,13 +504,12 @@ export const generarActaEntregaEgreso = (egreso: any): Promise<Buffer> => {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    // Helpers for dates in Spanish
-    const fechaObj = egreso.fecha_egreso ? new Date(egreso.fecha_egreso) : new Date(egreso.created_at || Date.now());
-    const meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-    const diaNum = fechaObj.getDate();
-    const mesNombre = meses[fechaObj.getMonth()];
-    const anioNum = fechaObj.getFullYear();
-    const fechaFormattedStr = `Quito, ${String(diaNum).padStart(2, '0')} de ${mesNombre} de ${anioNum}`;
+    // Helpers for dates in Spanish (zona horaria Ecuador)
+    const fechaObj = formatFechaEcuadorSpanish(egreso.fecha_egreso || egreso.created_at);
+    const diaNum = fechaObj.diaNum;
+    const mesNombre = fechaObj.mesNombre;
+    const anioNum = fechaObj.anioNum;
+    const fechaFormattedStr = fechaObj.textoLargo;
 
     // Extract code TI-INICIALES-AE-NUMERACION
     const empresaNombre = egreso.empresa_nombre || 'SMO';
@@ -642,12 +645,12 @@ export const generarActaRecepcion = (recepcion: any): Promise<Buffer> => {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    const fechaObj = recepcion.fecha_recepcion ? new Date(recepcion.fecha_recepcion) : new Date(recepcion.created_at || Date.now());
-    const meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-    const diaNum = fechaObj.getDate();
-    const mesNombre = meses[fechaObj.getMonth()];
-    const anioNum = fechaObj.getFullYear();
-    const fechaFormattedStr = `Quito, ${String(diaNum).padStart(2, '0')} de ${mesNombre} de ${anioNum}`;
+    // Helpers for dates in Spanish (zona horaria Ecuador)
+    const fechaObj = formatFechaEcuadorSpanish(recepcion.fecha_recepcion || recepcion.created_at);
+    const diaNum = fechaObj.diaNum;
+    const mesNombre = fechaObj.mesNombre;
+    const anioNum = fechaObj.anioNum;
+    const fechaFormattedStr = fechaObj.textoLargo;
 
     const codigoRecepcion = recepcion.codigo_recepcion || 'TI-AR-0001';
 
