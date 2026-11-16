@@ -99,25 +99,147 @@ export const getFechaHoraActualEcuador = (): string => {
 };
 
 /**
- * Formatea cualquier fecha o cadena a formato legible en zona horaria de Ecuador
+ * Parsea de forma segura cualquier entrada de fecha (Date, string ISO, string MySQL)
+ * extrayendo sus componentes en la zona horaria de Ecuador (America/Guayaquil, UTC-5).
+ * Si la cadena es formato MySQL sin zona horaria ('YYYY-MM-DD HH:mm:ss' o 'YYYY-MM-DD'),
+ * se respeta como hora local sin conversiones intermedias que puedan desfasarla.
+ */
+export const parseEcuadorDateTime = (
+  dateVal: Date | string | null | undefined
+): {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+} | null => {
+  if (!dateVal) return null;
+
+  if (typeof dateVal === 'string') {
+    const trimmed = dateVal.trim();
+    const hasTimezone = trimmed.includes('Z') || /[+-]\d{2}(:\d{2})?$/.test(trimmed);
+
+    if (!hasTimezone) {
+      const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+      if (match) {
+        return {
+          year: parseInt(match[1], 10),
+          month: parseInt(match[2], 10),
+          day: parseInt(match[3], 10),
+          hour: match[4] ? parseInt(match[4], 10) : 0,
+          minute: match[5] ? parseInt(match[5], 10) : 0,
+          second: match[6] ? parseInt(match[6], 10) : 0
+        };
+      }
+    }
+  }
+
+  const d = typeof dateVal === 'string' ? new Date(dateVal) : dateVal;
+  if (isNaN(d.getTime())) return null;
+
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: ECUADOR_TIMEZONE,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+    hour12: false
+  });
+
+  const parts = dtf.formatToParts(d);
+  const getVal = (type: string) => {
+    const p = parts.find(x => x.type === type);
+    return p ? parseInt(p.value, 10) : 0;
+  };
+
+  return {
+    year: getVal('year'),
+    month: getVal('month'),
+    day: getVal('day'),
+    hour: getVal('hour'),
+    minute: getVal('minute'),
+    second: getVal('second')
+  };
+};
+
+/**
+ * Retorna la fecha y hora en formato 'YYYY-MM-DD HH:mm:ss' (o 'YYYY-MM-DD HH:mm')
+ * en la zona horaria de Ecuador.
+ */
+export const formatFechaHoraEcuador = (
+  dateVal: Date | string | null | undefined,
+  includeSeconds = true
+): string => {
+  const p = parseEcuadorDateTime(dateVal);
+  if (!p) return typeof dateVal === 'string' ? dateVal : '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const base = `${p.year}-${pad(p.month)}-${pad(p.day)} ${pad(p.hour)}:${pad(p.minute)}`;
+  return includeSeconds ? `${base}:${pad(p.second)}` : base;
+};
+
+/**
+ * Retorna solo la fecha en formato 'YYYY-MM-DD' en la zona horaria de Ecuador.
+ */
+export const formatFechaEcuador = (
+  dateVal: Date | string | null | undefined
+): string => {
+  const p = parseEcuadorDateTime(dateVal);
+  if (!p) return typeof dateVal === 'string' ? dateVal.split('T')[0] : '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${p.year}-${pad(p.month)}-${pad(p.day)}`;
+};
+
+/**
+ * Retorna los componentes de fecha en español para actas institucionales en Ecuador.
+ * Ejemplo: { diaNum: 16, mesNombre: 'noviembre', anioNum: 2026, textoLargo: 'Quito, 16 de noviembre de 2026' }
+ */
+export const formatFechaEcuadorSpanish = (
+  dateVal: Date | string | null | undefined,
+  ciudad = 'Quito'
+): {
+  diaNum: number;
+  mesNombre: string;
+  anioNum: number;
+  textoLargo: string;
+} => {
+  const meses = [
+    'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
+  ];
+
+  const p = parseEcuadorDateTime(dateVal) || {
+    year: new Date().getFullYear(),
+    month: new Date().getMonth() + 1,
+    day: new Date().getDate(),
+    hour: 0,
+    minute: 0,
+    second: 0
+  };
+
+  const diaNum = p.day;
+  const mesNombre = meses[Math.max(0, Math.min(11, p.month - 1))];
+  const anioNum = p.year;
+  const diaPad = String(diaNum).padStart(2, '0');
+  const textoLargo = `${ciudad}, ${diaPad} de ${mesNombre} de ${anioNum}`;
+
+  return { diaNum, mesNombre, anioNum, textoLargo };
+};
+
+/**
+ * Formatea cualquier fecha o cadena a formato legible en zona horaria de Ecuador (DD/MM/YYYY o DD/MM/YYYY, HH:mm)
  */
 export const formatearFechaEcuador = (date: Date | string | null | undefined, includeTime = true): string => {
   if (!date) return '-';
-  const d = typeof date === 'string' ? new Date(date) : date;
-  if (isNaN(d.getTime())) return String(date);
+  const p = parseEcuadorDateTime(date);
+  if (!p) return String(date);
 
-  const options: Intl.DateTimeFormatOptions = {
-    timeZone: ECUADOR_TIMEZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  };
-
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const fechaStr = `${pad(p.day)}/${pad(p.month)}/${p.year}`;
   if (includeTime) {
-    options.hour = '2-digit';
-    options.minute = '2-digit';
-    options.hour12 = false;
+    return `${fechaStr}, ${pad(p.hour)}:${pad(p.minute)}`;
   }
-
-  return new Intl.DateTimeFormat('es-EC', options).format(d);
+  return fechaStr;
 };

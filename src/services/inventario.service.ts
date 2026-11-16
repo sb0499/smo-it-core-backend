@@ -2,6 +2,7 @@ import { pool } from '../db/connection';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { createTicket } from './ticket.service';
 import { getEmpresaAbbr } from './credencial.service';
+import { getFechaHoraActualEcuador } from '../utils/date.utils';
 
 export const getActivos = async (
   page = 1,
@@ -1136,9 +1137,11 @@ export const createEgresoBodega = async (
     sucursalId = sucRows[0]?.id || null;
   }
 
+  const fechaEgreso = getFechaHoraActualEcuador();
+
   const [result] = await pool.query<ResultSetHeader>(
-    `INSERT INTO egreso_bodega (codigo_egreso, empresa_id, sucursal_id, custodio_id, area, observaciones, realizado_por_id, revisado_por, revisado_por_cargo)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO egreso_bodega (codigo_egreso, empresa_id, sucursal_id, custodio_id, area, observaciones, fecha_egreso, realizado_por_id, revisado_por, revisado_por_cargo)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       codigoEgreso,
       data.empresa_id,
@@ -1146,6 +1149,7 @@ export const createEgresoBodega = async (
       data.custodio_id,
       data.area || null,
       data.observaciones || null,
+      fechaEgreso,
       usuarioId || null,
       revisadoPor,
       revisadoPorCargo
@@ -1411,10 +1415,11 @@ export const createRecepcionBodega = async (
   }
 
   // 1. Insert into recepcion_bodega
+  const fechaRecepcion = getFechaHoraActualEcuador();
   const [result] = await pool.query<ResultSetHeader>(
     `INSERT INTO recepcion_bodega 
-     (codigo_recepcion, empresa_id, sucursal_id, persona_entrega_id, recibido_por_id, area, bodega_id, estado_destino, observaciones, revisado_por, revisado_por_cargo)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (codigo_recepcion, empresa_id, sucursal_id, persona_entrega_id, recibido_por_id, area, bodega_id, estado_destino, observaciones, revisado_por, revisado_por_cargo, fecha_recepcion)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       codigoRecepcion,
       data.empresa_id,
@@ -1426,7 +1431,8 @@ export const createRecepcionBodega = async (
       estadoDestino,
       data.observaciones || null,
       revisadoPor,
-      revisadoPorCargo
+      revisadoPorCargo,
+      fechaRecepcion
     ]
   );
   const recepcionId = result.insertId;
